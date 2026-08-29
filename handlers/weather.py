@@ -176,6 +176,13 @@ def _store_attach(
             pending.pop(key, None)
 
 
+def _peek_attach(context: ContextTypes.DEFAULT_TYPE, result_id: str | None):
+    pending = context.bot_data.get(_ATTACH_STORE) or {}
+    if result_id and result_id in pending:
+        return pending[result_id]
+    return None
+
+
 def _pop_attach(context: ContextTypes.DEFAULT_TYPE, result_id: str | None, short_id: str | None):
     pending = context.bot_data.get(_ATTACH_STORE) or {}
     if result_id and result_id in pending:
@@ -200,18 +207,55 @@ async def _replace_stub_media(context: ContextTypes.DEFAULT_TYPE, inline_message
     )
 
 
+async def weather_replace_job(context: ContextTypes.DEFAULT_TYPE):
+    data = context.job.data
+    try:
+        await _replace_stub_media(context, data["imid"], data["attach"])
+        _pop_attach(context, data.get("result_id"), None)
+    except Exception:
+        attempt = data.get("attempt", 1)
+        if attempt < 6 and context.job_queue:
+            context.job_queue.run_once(
+                weather_replace_job,
+                when=0.5,
+                data={**data, "attempt": attempt + 1},
+            )
+
+
+async def _replace_now_or_retry(
+    context: ContextTypes.DEFAULT_TYPE,
+    inline_message_id: str,
+    attach,
+    result_id: str | None,
+) -> None:
+    try:
+        await _replace_stub_media(context, inline_message_id, attach)
+        _pop_attach(context, result_id, None)
+    except Exception:
+        if context.job_queue:
+            context.job_queue.run_once(
+                weather_replace_job,
+                when=0.4,
+                data={
+                    "imid": inline_message_id,
+                    "attach": attach,
+                    "result_id": result_id,
+                    "attempt": 1,
+                },
+            )
+
+
 async def weather_chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """После отправки заглушки подменяет её на пасхалку. Нужен /setinlinefeedback."""
     chosen = update.chosen_inline_result
     if not chosen or not chosen.inline_message_id:
         return
-    attach = _pop_attach(context, chosen.result_id, None)
+    attach = _peek_attach(context, chosen.result_id)
     if not attach:
         return
-    try:
-        await _replace_stub_media(context, chosen.inline_message_id, attach)
-    except Exception:
-        pass
+    await _replace_now_or_retry(
+        context, chosen.inline_message_id, attach, chosen.result_id
+    )
 
 
 async def weather_stub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

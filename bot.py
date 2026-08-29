@@ -9,6 +9,7 @@ from telegram import (
     BotCommandScopeAllGroupChats,  # меню в группах
     BotCommandScopeAllPrivateChats,  # меню в личке
     BotCommandScopeDefault,  # запасной скоуп, если более узкий не задан
+    Update,  # типы апдейтов для polling, включая chosen_inline_result
 )
 
 # Сборка бота и маршрутизация апдейтов
@@ -136,7 +137,7 @@ def main():
 
     application.add_error_handler(error_handler)
 
-    application.run_polling()
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
