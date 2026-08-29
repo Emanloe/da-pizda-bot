@@ -119,7 +119,7 @@ def main():
     # Дуэли: команда, вызовы, кнопки атак/блоков, статы и админ-удаление
     application.add_handler(CommandHandler("duel", duel_command))
     application.add_handler(CallbackQueryHandler(duel_select_callback, pattern="^start_duel_"))
-    application.add_handler(CallbackQueryHandler(duel_action_callback, pattern="^duel_strike_"))
+    application.add_handler(CallbackQueryHandler(duel_action_callback, pattern="^duel_(strike|block)_"))
     application.add_handler(CommandHandler("duel_stats", duel_stats_command))
     application.add_handler(CommandHandler("duel_top", duel_top_command))
     application.add_handler(CommandHandler("duel_delete", duel_delete_command))

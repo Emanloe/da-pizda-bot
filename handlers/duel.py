@@ -146,6 +146,17 @@ def _get_strike_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+def _get_block_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton("🛡️ Голова", callback_data="duel_block_head"),
+            InlineKeyboardButton("🛡️ Торс", callback_data="duel_block_body"),
+            InlineKeyboardButton("🛡️ Хуй", callback_data="duel_block_dick"),
+        ]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+
 async def _start_interactive_fight(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
@@ -155,13 +166,13 @@ async def _start_interactive_fight(
     defender_data: dict,
     original_msg_id: int = None
 ):
-    secret_block = random.choice(["head", "body", "dick"])
     duel_state = {
         "attacker_tg": attacker_tg,
         "defender_tg": defender_tg,
         "attacker_data": attacker_data,
         "defender_data": defender_data,
-        "secret_block": secret_block,
+        "phase": "attack",  # "attack" или "block"
+        "attack_zone": None,
         "round": 1,
         "message_id": None,
         "turn_task": None,
@@ -175,7 +186,7 @@ async def _start_interactive_fight(
     text = (
         f"🗡️ <b>Гномья дуэль начинается!</b>\n\n"
         f"⚔️ Атакует: <b>{att_title}</b>\n"
-        f"🛡️ Защищается: <b>{def_title}</b> (уже выбрал секретную зону блока!)\n\n"
+        f"🛡️ Защищается: <b>{def_title}</b>\n\n"
         f"⏳ У <b>{att_title}</b> есть {MOVE_TIMEOUT} секунд, чтобы выбрать точку удара:"
     )
 
@@ -188,33 +199,44 @@ async def _start_interactive_fight(
 
     duel_state["message_id"] = bot_msg.message_id
 
-    task = asyncio.create_task(_auto_move_timer(context, chat_id, duel_state["round"]))
+    task = asyncio.create_task(_auto_move_timer(context, chat_id, duel_state["round"], phase="attack"))
     duel_state["turn_task"] = task
 
 
-async def _auto_move_timer(context: ContextTypes.DEFAULT_TYPE, chat_id: int, round_num: int):
+async def _auto_move_timer(context: ContextTypes.DEFAULT_TYPE, chat_id: int, round_num: int, phase: str):
     await asyncio.sleep(MOVE_TIMEOUT)
     duel = ACTIVE_DUELS.get(chat_id)
 
-    if duel and duel.get("round") == round_num:
+    if duel and duel.get("round") == round_num and duel.get("phase") == phase:
         random_choice = random.choice(["head", "body", "dick"])
-        att_title = format_user_title(duel["attacker_data"])
         
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"⏰ <b>{att_title}</b> зазевался! Система делает случайный выбор...",
-                parse_mode="HTML"
-            )
-        except Exception:
-            pass
-        
-        await _process_strike(context, chat_id, random_choice)
+        if phase == "attack":
+            att_title = format_user_title(duel["attacker_data"])
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⏰ <b>{att_title}</b> зазевался! Система делает случайный выбор атаки...",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+            await _process_attack_choice(context, chat_id, random_choice)
+        elif phase == "block":
+            def_title = format_user_title(duel["defender_data"])
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⏰ <b>{def_title}</b> зазевался! Система делает случайный выбор блока...",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+            await _process_block_choice(context, chat_id, random_choice)
 
 
 async def duel_strike_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not query or not query.data or not query.data.startswith("duel_strike_"):
+    if not query or not query.data:
         return
 
     chat_id = update.effective_chat.id
@@ -224,35 +246,100 @@ async def duel_strike_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("Дуэль не найдена или уже завершена.", show_alert=True)
         return
 
-    if query.from_user.id != duel["attacker_tg"].id:
-        await query.answer("Сейчас не ваш ход!", show_alert=True)
+    # ОБРАБОТКА ШАГА 1: ВЫБОР АТАКИ
+    if query.data.startswith("duel_strike_"):
+        if duel["phase"] != "attack":
+            await query.answer("Атака уже выбрана! Ждем блок.", show_alert=True)
+            return
+
+        if query.from_user.id != duel["attacker_tg"].id:
+            await query.answer("Сейчас не ваш ход для атаки!", show_alert=True)
+            return
+
+        await query.answer()
+
+        if duel.get("turn_task") and not duel["turn_task"].done():
+            duel["turn_task"].cancel()
+
+        target_zone = query.data.replace("duel_strike_", "")
+        await _process_attack_choice(context, chat_id, target_zone)
         return
 
-    await query.answer()
+    # ОБРАБОТКА ШАГА 2: ВЫБОР БЛОКА
+    if query.data.startswith("duel_block_"):
+        if duel["phase"] != "block":
+            await query.answer("Сейчас не фаза блока!", show_alert=True)
+            return
 
-    if duel.get("turn_task") and not duel["turn_task"].done():
-        duel["turn_task"].cancel()
+        if query.from_user.id != duel["defender_tg"].id:
+            await query.answer("Сейчас не ваш ход для защиты!", show_alert=True)
+            return
 
-    target_zone = query.data.replace("duel_strike_", "")
-    await _process_strike(context, chat_id, target_zone)
+        await query.answer()
+
+        if duel.get("turn_task") and not duel["turn_task"].done():
+            duel["turn_task"].cancel()
+
+        block_zone = query.data.replace("duel_block_", "")
+        await _process_block_choice(context, chat_id, block_zone)
+        return
 
 
 # Алиас для совместимости с bot.py
 duel_action_callback = duel_strike_callback
 
 
-async def _process_strike(context: ContextTypes.DEFAULT_TYPE, chat_id: int, strike_zone: str):
+async def _process_attack_choice(context: ContextTypes.DEFAULT_TYPE, chat_id: int, strike_zone: str):
     duel = ACTIVE_DUELS.get(chat_id)
     if not duel:
         return
 
+    duel["attack_zone"] = strike_zone
+    duel["phase"] = "block"
+
+    att_title = format_user_title(duel["attacker_data"])
+    def_title = format_user_title(duel["defender_data"])
+
+    text = (
+        f"🗡️ <b>Гномья дуэль! Раунд {duel['round']}</b>\n\n"
+        f"⚔️ <b>{att_title}</b> наносит замах!\n"
+        f"🛡️ <b>{def_title}</b>, выберите зону защиты!\n\n"
+        f"⏳ У <b>{def_title}</b> есть {MOVE_TIMEOUT} секунд на выбор блока:"
+    )
+
+    try:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=duel["message_id"],
+            text=text,
+            parse_mode="HTML",
+            reply_markup=_get_block_keyboard()
+        )
+    except Exception:
+        bot_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=_get_block_keyboard()
+        )
+        duel["message_id"] = bot_msg.message_id
+
+    task = asyncio.create_task(_auto_move_timer(context, chat_id, duel["round"], phase="block"))
+    duel["turn_task"] = task
+
+
+async def _process_block_choice(context: ContextTypes.DEFAULT_TYPE, chat_id: int, block_zone: str):
+    duel = ACTIVE_DUELS.get(chat_id)
+    if not duel:
+        return
+
+    strike_zone = duel["attack_zone"]
     attacker_data = duel["attacker_data"]
     defender_data = duel["defender_data"]
     att_title = format_user_title(attacker_data)
     def_title = format_user_title(defender_data)
-    secret_block = duel["secret_block"]
 
-    # 1. Шанс 1% — Самоубийство
+    # 1. Шанс 1% — Самоубийство атаковавшего
     if random.random() < 0.01:
         suicide_phrase = random.choice(SUICIDE_PHRASES)
         res_text = (
@@ -268,9 +355,11 @@ async def _process_strike(context: ContextTypes.DEFAULT_TYPE, chat_id: int, stri
         miss_phrase = random.choice(MISS_PHRASES)
         att_action = random.choice(ATTACK_PHRASES)
         
+        # Смена ролей
         duel["attacker_tg"], duel["defender_tg"] = duel["defender_tg"], duel["attacker_tg"]
         duel["attacker_data"], duel["defender_data"] = duel["defender_data"], duel["attacker_data"]
-        duel["secret_block"] = random.choice(["head", "body", "dick"])
+        duel["phase"] = "attack"
+        duel["attack_zone"] = None
         duel["round"] += 1
 
         new_att_title = format_user_title(duel["attacker_data"])
@@ -281,7 +370,7 @@ async def _process_strike(context: ContextTypes.DEFAULT_TYPE, chat_id: int, stri
             f"<b>{att_title}</b> {att_action} в зону ({TARGET_NAMES[strike_zone]}), но {miss_phrase}\n\n"
             f"🔄 <b>Смена ролей!</b>\n"
             f"⚔️ Атакует: <b>{new_att_title}</b>\n"
-            f"🛡️ Защищается: <b>{new_def_title}</b> (зона блока уже выбрана!)\n\n"
+            f"🛡️ Защищается: <b>{new_def_title}</b>\n\n"
             f"⏳ У <b>{new_att_title}</b> есть {MOVE_TIMEOUT} секунд на удар:"
         )
 
@@ -302,18 +391,20 @@ async def _process_strike(context: ContextTypes.DEFAULT_TYPE, chat_id: int, stri
             )
             duel["message_id"] = bot_msg.message_id
 
-        task = asyncio.create_task(_auto_move_timer(context, chat_id, duel["round"]))
+        task = asyncio.create_task(_auto_move_timer(context, chat_id, duel["round"], phase="attack"))
         duel["turn_task"] = task
         return
 
     # 3. Сравнение УДАРА и БЛОКА
-    if strike_zone == secret_block:
+    if strike_zone == block_zone:
         block_phrase = random.choice(BLOCK_PHRASES)
         att_action = random.choice(ATTACK_PHRASES)
 
+        # Смена ролей
         duel["attacker_tg"], duel["defender_tg"] = duel["defender_tg"], duel["attacker_tg"]
         duel["attacker_data"], duel["defender_data"] = duel["defender_data"], duel["attacker_data"]
-        duel["secret_block"] = random.choice(["head", "body", "dick"])
+        duel["phase"] = "attack"
+        duel["attack_zone"] = None
         duel["round"] += 1
 
         new_att_title = format_user_title(duel["attacker_data"])
@@ -324,7 +415,7 @@ async def _process_strike(context: ContextTypes.DEFAULT_TYPE, chat_id: int, stri
             f"<b>{att_title}</b> {att_action} в зону ({TARGET_NAMES[strike_zone]}), но <b>{def_title}</b> {block_phrase}\n\n"
             f"🔄 <b>Инициатива переходит!</b>\n"
             f"⚔️ Атакует: <b>{new_att_title}</b>\n"
-            f"🛡️ Защищается: <b>{new_def_title}</b> (зона блока выбрана!)\n\n"
+            f"🛡️ Защищается: <b>{new_def_title}</b>\n\n"
             f"⏳ У <b>{new_att_title}</b> есть {MOVE_TIMEOUT} секунд на удар:"
         )
 
@@ -345,7 +436,7 @@ async def _process_strike(context: ContextTypes.DEFAULT_TYPE, chat_id: int, stri
             )
             duel["message_id"] = bot_msg.message_id
 
-        task = asyncio.create_task(_auto_move_timer(context, chat_id, duel["round"]))
+        task = asyncio.create_task(_auto_move_timer(context, chat_id, duel["round"], phase="attack"))
         duel["turn_task"] = task
 
     else:
@@ -354,7 +445,7 @@ async def _process_strike(context: ContextTypes.DEFAULT_TYPE, chat_id: int, stri
 
         res_text = (
             f"💥 <b>ТОЧНЫЙ УДАР!</b>\n"
-            f"<b>{att_title}</b> {att_action} в зону ({TARGET_NAMES[strike_zone]}), а <b>{def_title}</b> блокировал ({TARGET_NAMES[secret_block]}).\n"
+            f"<b>{att_title}</b> {att_action} в зону ({TARGET_NAMES[strike_zone]}), а <b>{def_title}</b> блокировал ({TARGET_NAMES[block_zone]}).\n"
             f"<b>{att_title}</b> {hit_phrase}\n"
         )
         await _finish_duel(context, chat_id, winner=attacker_data, loser=defender_data, custom_text=res_text)
