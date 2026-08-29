@@ -215,7 +215,7 @@ async def _auto_move_timer(context: ContextTypes.DEFAULT_TYPE, chat_id: int, rou
             try:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"⏰ <b>{att_title}</b> зазевался! Система делает случайный выбор атаки...",
+                    text=f"⏰ <b>{att_title}</b> зазевался! Гномий синедрион делает случайный выбор атаки...",
                     parse_mode="HTML"
                 )
             except Exception:
@@ -226,7 +226,7 @@ async def _auto_move_timer(context: ContextTypes.DEFAULT_TYPE, chat_id: int, rou
             try:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"⏰ <b>{def_title}</b> зазевался! Система делает случайный выбор блока...",
+                    text=f"⏰ <b>{def_title}</b> зазевался! Гномий синедрион делает случайный выбор блока...",
                     parse_mode="HTML"
                 )
             except Exception:
@@ -347,7 +347,15 @@ async def _process_block_choice(context: ContextTypes.DEFAULT_TYPE, chat_id: int
             f"<b>{att_title}</b> {suicide_phrase}\n\n"
             f"🏆 Победитель по глупости соперника: <b>{def_title}</b>!"
         )
-        await _finish_duel(context, chat_id, winner=defender_data, loser=attacker_data, custom_text=res_text)
+        await _finish_duel(
+            context, 
+            chat_id, 
+            winner=defender_data, 
+            loser=attacker_data, 
+            custom_text=res_text,
+            strike_zone=strike_zone,
+            block_zone=block_zone
+        )
         return
 
     # 2. Шанс 5% — Промах
@@ -448,13 +456,37 @@ async def _process_block_choice(context: ContextTypes.DEFAULT_TYPE, chat_id: int
             f"<b>{att_title}</b> {att_action} в зону ({TARGET_NAMES[strike_zone]}), а <b>{def_title}</b> блокировал ({TARGET_NAMES[block_zone]}).\n"
             f"<b>{att_title}</b> {hit_phrase}\n"
         )
-        await _finish_duel(context, chat_id, winner=attacker_data, loser=defender_data, custom_text=res_text)
+        await _finish_duel(
+            context, 
+            chat_id, 
+            winner=attacker_data, 
+            loser=defender_data, 
+            custom_text=res_text,
+            strike_zone=strike_zone,
+            block_zone=block_zone
+        )
 
 
-async def _finish_duel(context: ContextTypes.DEFAULT_TYPE, chat_id: int, winner: dict, loser: dict, custom_text: str):
+async def _finish_duel(
+    context: ContextTypes.DEFAULT_TYPE, 
+    chat_id: int, 
+    winner: dict, 
+    loser: dict, 
+    custom_text: str,
+    strike_zone: str = None,
+    block_zone: str = None
+):
     duel = ACTIVE_DUELS.pop(chat_id, None)
 
-    is_dick_stolen = random.random() < DICK_STEAL_CHANCE
+    # Динамический расчет шанса кражи
+    steal_chance = DICK_STEAL_CHANCE
+    if strike_zone == "dick":
+        steal_chance *= 2.0  # Повышаем шанс при ударе в пах
+    if block_zone == "dick":
+        steal_chance /= 4.0  # Кратно понижаем шанс при блоке паха
+
+    steal_chance = max(0.0, min(1.0, steal_chance))
+    is_dick_stolen = random.random() < steal_chance
 
     try:
         w_after, l_after = execute_duel_transaction(
@@ -483,7 +515,7 @@ async def _finish_duel(context: ContextTypes.DEFAULT_TYPE, chat_id: int, winner:
     if is_dick_stolen:
         fact = random.choice(DWARFS_FACTS)
         res_msg += (
-            f"\n💀 <b>И ВДОБАВОК У НЕГО УКРАЛИ ХУЙ.</b>\n"
+            f"\n💀 <b>И ВДОБАВОК У НЕГО УКРАЛИ ХУЙ.</b>\n\n"
             f"Сегодня {lose_title} больше не может драться.\n\n"
             f"📖 <i>{fact}</i>"
         )
