@@ -43,7 +43,7 @@ with open(_BIRTHDAY_CONTENT_PATH, encoding="utf-8") as _birthday_file:
 BIRTHDAY_GIF_ID = _birthday_content["birthday_gif_id"]
 
 # --- Настройки планировщика ---
-GAME_HOUR = 18
+GAME_HOUR = 10
 GAME_MINUTE = 0
 DUEL_TIMEZONE = "Europe/Moscow"
 
