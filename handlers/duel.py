@@ -381,7 +381,7 @@ async def _auto_move_timer(
             )
 
             try:
-                await context.bot.send_message(
+                timeout_msg = await context.bot.send_message(
                     chat_id=chat_id,
                     text=(
                         f"⏰ <b>{att_title}</b> зазевался! "
@@ -389,6 +389,11 @@ async def _auto_move_timer(
                         f"выбор атаки..."
                     ),
                     parse_mode="HTML",
+                )
+                schedule_auto_delete(
+                    context,
+                    chat_id,
+                    [timeout_msg.message_id],
                 )
             except Exception:
                 pass
@@ -406,7 +411,7 @@ async def _auto_move_timer(
             )
 
             try:
-                await context.bot.send_message(
+                timeout_msg = await context.bot.send_message(
                     chat_id=chat_id,
                     text=(
                         f"⏰ <b>{def_title}</b> зазевался! "
@@ -414,6 +419,11 @@ async def _auto_move_timer(
                         f"выбор блока..."
                     ),
                     parse_mode="HTML",
+                )
+                schedule_auto_delete(
+                    context,
+                    chat_id,
+                    [timeout_msg.message_id],
                 )
             except Exception:
                 pass
