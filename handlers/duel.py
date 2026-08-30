@@ -1275,13 +1275,26 @@ async def _process_duel_fight(
         opponent["username"],
     )
 
+    # Случайно определяем, кто будет атаковать первым.
+    # Инициатор дуэли больше не получает автоматического преимущества.
+    if random.choice([True, False]):
+        first_attacker_tg = initiator_tg
+        first_defender_tg = opponent_tg
+        first_attacker_data = initiator
+        first_defender_data = opponent
+    else:
+        first_attacker_tg = opponent_tg
+        first_defender_tg = initiator_tg
+        first_attacker_data = opponent
+        first_defender_data = initiator
+
     await _start_interactive_fight(
         context=context,
         chat_id=chat_id,
-        attacker_tg=initiator_tg,
-        defender_tg=opponent_tg,
-        attacker_data=initiator,
-        defender_data=opponent,
+        attacker_tg=first_attacker_tg,
+        defender_tg=first_defender_tg,
+        attacker_data=first_attacker_data,
+        defender_data=first_defender_data,
         original_msg_id=original_msg_id,
     )
 
