@@ -1,0 +1,75 @@
+{
+  "bosses": [
+    {
+      "id": "drunk_viking",
+      "name": "Пьяный Викинг",
+      "emoji": "🍺",
+      "hp": 80,
+      "damage": 12,
+      "defense": 3,
+      "title": "Весёлый громила",
+      "special_ability": "drunken_rage",
+      "base_reward": 15,
+      "encounter_chance": 0.25
+    },
+    {
+      "id": "bureaucrat",
+      "name": "Бюрократ",
+      "emoji": "📋",
+      "hp": 60,
+      "damage": 8,
+      "defense": 20,
+      "title": "Хранитель бумаг",
+      "special_ability": "paper_storm",
+      "base_reward": 20,
+      "encounter_chance": 0.15
+    },
+    {
+      "id": "shadow_assassin",
+      "name": "Теневой убийца",
+      "emoji": "🥷",
+      "hp": 70,
+      "damage": 35,
+      "defense": 8,
+      "title": "Невидимый убийца",
+      "special_ability": "backstab",
+      "base_reward": 20,
+      "encounter_chance": 0.15,
+      "loot": [
+        {
+          "id": "shadow_blade",
+          "name": "Теневой клинок",
+          "emoji": "🗡️",
+          "rarity": "rare",
+          "value": 40,
+          "effect": "poison",
+          "duel_item_id": "shadow_blade"
+        }
+      ]
+    },
+    {
+      "id": "pensioner",
+      "name": "Пенсионер",
+      "emoji": "👴",
+      "hp": 40,
+      "damage": 5,
+      "defense": 30,
+      "title": "Бессмертный старик",
+      "special_ability": "experience_wisdom",
+      "base_reward": 10,
+      "encounter_chance": 0.2
+    },
+    {
+      "id": "angry_babushka",
+      "name": "Злая Бабушка",
+      "emoji": "👵",
+      "hp": 50,
+      "damage": 10,
+      "defense": 25,
+      "title": "Властелин тапка",
+      "special_ability": "slipper_throw",
+      "base_reward": 12,
+      "encounter_chance": 0.3
+    }
+  ]
+}
