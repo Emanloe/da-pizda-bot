@@ -1,0 +1,257 @@
+{
+  "locations": [
+    {
+      "id": "dark_forest",
+      "name": "Тёмный лес",
+      "emoji": "🌲",
+      "description": "Густой, зловещий лес, полный опасностей и тайн. Мхом обвиты древние деревья, а в кустах слышатся странные шорохи.",
+      "entry_cost": 10,
+      "bosses": [
+        {
+          "id": "pine_baron",
+          "name": "Хвойный Барон",
+          "title": "Владыка иголок",
+          "emoji": "🌲",
+          "hp": 150,
+          "damage": 15,
+          "defense": 10,
+          "special_ability": "needle_storm",
+          "loot": [
+            {
+              "id": "pine_hero",
+              "name": "Хвойный герой",
+              "emoji": "🌲",
+              "rarity": "rare",
+              "duel_item_id": "pine_hero",
+              "effect": "Curse"
+            }
+          ],
+          "base_reward": 25,
+          "encounter_chance": 0.4
+        }
+      ],
+      "items": [
+        {
+          "id": "forest_berry",
+          "name": "Лесная ягода",
+          "emoji": "🫐",
+          "rarity": "common",
+          "value": 3,
+          "drop_chance": 0.3,
+          "effect": "heal"
+        },
+        {
+          "id": "mushroom",
+          "name": "Съедобный гриб",
+          "emoji": "🍄",
+          "rarity": "common",
+          "value": 4,
+          "drop_chance": 0.2
+        }
+      ],
+      "events": [
+        {
+          "id": "lost_way",
+          "name": "Потерянный путь",
+          "description": "Ты заблудился в чаще и потерял 5 монет, пока искал выход.",
+          "effect": "lose_gold",
+          "value": 5,
+          "chance": 0.15
+        },
+        {
+          "id": "friendly_druid",
+          "name": "Дружелюбный друид",
+          "description": "Заблудший друид отблагодарил тебя за помощь, восстановив 20 HP.",
+          "effect": "heal",
+          "value": 20,
+          "chance": 0.1
+        }
+      ],
+      "requirements": {
+        "min_level": 1
+      }
+    },
+    {
+      "id": "abandoned_mine",
+      "name": "Заброшенная шахта",
+      "emoji": "⛏️",
+      "description": "Заброшенная шахта, где когда-то добывали руду. Теперь здесь обитают опасные твари.",
+      "entry_cost": 15,
+      "bosses": [
+        {
+          "id": "mine_troll",
+          "name": "Шахтный тролль",
+          "title": "Каменная плоть",
+          "emoji": "👹",
+          "hp": 200,
+          "damage": 20,
+          "defense": 15,
+          "special_ability": "stone_skin",
+          "loot": [
+            {
+              "id": "pine_hero",
+              "name": "Хвойный герой",
+              "emoji": "🌲",
+              "rarity": "rare",
+              "duel_item_id": "pine_hero",
+              "effect": "Curse"
+            }
+          ],
+          "base_reward": 35,
+          "encounter_chance": 0.6
+        },
+        {
+          "id": "goblin_shaman",
+          "name": "Гоблин-шаман",
+          "title": "Тёмный колдун",
+          "emoji": "🧙",
+          "hp": 120,
+          "damage": 25,
+          "defense": 5,
+          "special_ability": "fireball",
+          "loot": [
+            {
+              "id": "cigarette",
+              "name": "🚬 Сигарета",
+              "rarity": "common",
+              "duel_item_id": "cigarette",
+              "effect": "Curse"
+            }
+          ],
+          "base_reward": 20,
+          "encounter_chance": 0.4
+        }
+      ],
+      "items": [
+        {
+          "id": "iron_ore",
+          "name": "Железная руда",
+          "emoji": "⛏️",
+          "rarity": "common",
+          "value": 8,
+          "drop_chance": 0.25
+        },
+        {
+          "id": "emerald",
+          "name": "Изумруд",
+          "emoji": "💎",
+          "rarity": "rare",
+          "value": 30,
+          "drop_chance": 0.08
+        }
+      ],
+      "events": [
+        {
+          "id": "cave_in",
+          "name": "Обвал",
+          "description": "Потолок шахты начал обрушиваться! Ты получил 15 урона, убегая.",
+          "effect": "damage",
+          "value": 15,
+          "chance": 0.2
+        },
+        {
+          "id": "gem_vein",
+          "name": "Жила драгоценных камней",
+          "description": "Ты нашел блестящую жилу самоцветов и получил 20 монет!",
+          "effect": "gain_gold",
+          "value": 20,
+          "chance": 0.1
+        }
+      ],
+      "requirements": {
+        "min_level": 2
+      }
+    },
+    {
+      "id": "dragon_lair",
+      "name": "Логово дракона",
+      "emoji": "🐉",
+      "description": "Пещера, где обитает древний дракон. Воздух здесь пропитан запахом серы и золота.",
+      "entry_cost": 25,
+      "bosses": [
+        {
+          "id": "ancient_dragon",
+          "name": "Древний дракон",
+          "title": "Повелитель пламени",
+          "emoji": "🐉",
+          "hp": 500,
+          "damage": 45,
+          "defense": 25,
+          "special_ability": "fire_breath",
+          "loot": [
+            {
+              "id": "pine_hero",
+              "name": "Хвойный герой",
+              "emoji": "🌲",
+              "rarity": "rare",
+              "duel_item_id": "pine_hero",
+              "effect": "Curse"
+            }
+          ],
+          "base_reward": 100,
+          "encounter_chance": 0.3
+        },
+        {
+          "id": "dragon_whelp",
+          "name": "Дракончик",
+          "title": "Огненный отродок",
+          "emoji": "🦎",
+          "hp": 80,
+          "damage": 18,
+          "defense": 5,
+          "special_ability": "fire_spit",
+          "loot": [
+            {
+              "id": "cigarette",
+              "name": "🚬 Сигарета",
+              "rarity": "common",
+              "duel_item_id": "cigarette",
+              "effect": "Curse"
+            }
+          ],
+          "base_reward": 15,
+          "encounter_chance": 0.7
+        }
+      ],
+      "items": [
+        {
+          "id": "dragon_scale",
+          "name": "Драконья чешуя",
+          "emoji": "🐉",
+          "rarity": "legendary",
+          "value": 100,
+          "drop_chance": 0.05
+        },
+        {
+          "id": "golden_chalice",
+          "name": "Золотой кубок",
+          "emoji": "🏆",
+          "rarity": "epic",
+          "value": 60,
+          "drop_chance": 0.1
+        }
+      ],
+      "events": [
+        {
+          "id": "treasure_hoard",
+          "name": "Сокровищница",
+          "description": "Ты нашел гору золота дракона и забрал 50 монет, пока он спит!",
+          "effect": "gain_gold",
+          "value": 50,
+          "chance": 0.05
+        },
+        {
+          "id": "dragon_awakening",
+          "name": "Пробуждение дракона",
+          "description": "Дракон проснулся! Придется сражаться или убегать, получив 30 урона.",
+          "effect": "damage",
+          "value": 30,
+          "chance": 0.2
+        }
+      ],
+      "requirements": {
+        "min_level": 5
+      }
+    }
+  ]
+}
