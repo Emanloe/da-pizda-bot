@@ -1,257 +1,300 @@
 {
-  "locations": [
-    {
-      "id": "dark_forest",
-      "name": "Тёмный лес",
-      "emoji": "🌲",
-      "description": "Густой, зловещий лес, полный опасностей и тайн. Мхом обвиты древние деревья, а в кустах слышатся странные шорохи.",
-      "entry_cost": 10,
-      "bosses": [
-        {
-          "id": "pine_baron",
-          "name": "Хвойный Барон",
-          "title": "Владыка иголок",
-          "emoji": "🌲",
-          "hp": 150,
-          "damage": 15,
-          "defense": 10,
-          "special_ability": "needle_storm",
-          "loot": [
-            {
-              "id": "pine_hero",
-              "name": "Хвойный герой",
-              "emoji": "🌲",
-              "rarity": "rare",
-              "duel_item_id": "pine_hero",
-              "effect": "Curse"
-            }
-          ],
-          "base_reward": 25,
-          "encounter_chance": 0.4
-        }
-      ],
-      "items": [
-        {
-          "id": "forest_berry",
-          "name": "Лесная ягода",
-          "emoji": "🫐",
-          "rarity": "common",
-          "value": 3,
-          "drop_chance": 0.3,
-          "effect": "heal"
-        },
-        {
-          "id": "mushroom",
-          "name": "Съедобный гриб",
-          "emoji": "🍄",
-          "rarity": "common",
-          "value": 4,
-          "drop_chance": 0.2
-        }
-      ],
-      "events": [
-        {
-          "id": "lost_way",
-          "name": "Потерянный путь",
-          "description": "Ты заблудился в чаще и потерял 5 монет, пока искал выход.",
-          "effect": "lose_gold",
-          "value": 5,
-          "chance": 0.15
-        },
-        {
-          "id": "friendly_druid",
-          "name": "Дружелюбный друид",
-          "description": "Заблудший друид отблагодарил тебя за помощь, восстановив 20 HP.",
-          "effect": "heal",
-          "value": 20,
-          "chance": 0.1
-        }
-      ],
-      "requirements": {
-        "min_level": 1
-      }
+  "dark_forest": {
+    "id": "dark_forest",
+    "name": "Тёмный лес",
+    "description": "Густой лес, полный опасных тварей и древних секретов.",
+    "difficulty": 1,
+    "entry_cost": 10,
+    "requirements": {
+      "min_level": 1
     },
-    {
-      "id": "abandoned_mine",
-      "name": "Заброшенная шахта",
-      "emoji": "⛏️",
-      "description": "Заброшенная шахта, где когда-то добывали руду. Теперь здесь обитают опасные твари.",
-      "entry_cost": 15,
-      "bosses": [
-        {
-          "id": "mine_troll",
-          "name": "Шахтный тролль",
-          "title": "Каменная плоть",
-          "emoji": "👹",
-          "hp": 200,
-          "damage": 20,
-          "defense": 15,
-          "special_ability": "stone_skin",
-          "loot": [
-            {
-              "id": "pine_hero",
-              "name": "Хвойный герой",
-              "emoji": "🌲",
-              "rarity": "rare",
-              "duel_item_id": "pine_hero",
-              "effect": "Curse"
-            }
-          ],
-          "base_reward": 35,
-          "encounter_chance": 0.6
-        },
-        {
-          "id": "goblin_shaman",
-          "name": "Гоблин-шаман",
-          "title": "Тёмный колдун",
-          "emoji": "🧙",
-          "hp": 120,
-          "damage": 25,
-          "defense": 5,
-          "special_ability": "fireball",
-          "loot": [
-            {
-              "id": "cigarette",
-              "name": "🚬 Сигарета",
-              "rarity": "common",
-              "duel_item_id": "cigarette",
-              "effect": "Curse"
-            }
-          ],
-          "base_reward": 20,
-          "encounter_chance": 0.4
-        }
-      ],
-      "items": [
-        {
-          "id": "iron_ore",
-          "name": "Железная руда",
-          "emoji": "⛏️",
-          "rarity": "common",
-          "value": 8,
-          "drop_chance": 0.25
-        },
-        {
-          "id": "emerald",
-          "name": "Изумруд",
-          "emoji": "💎",
-          "rarity": "rare",
-          "value": 30,
-          "drop_chance": 0.08
-        }
-      ],
-      "events": [
-        {
-          "id": "cave_in",
-          "name": "Обвал",
-          "description": "Потолок шахты начал обрушиваться! Ты получил 15 урона, убегая.",
-          "effect": "damage",
-          "value": 15,
-          "chance": 0.2
-        },
-        {
-          "id": "gem_vein",
-          "name": "Жила драгоценных камней",
-          "description": "Ты нашел блестящую жилу самоцветов и получил 20 монет!",
-          "effect": "gain_gold",
-          "value": 20,
-          "chance": 0.1
-        }
-      ],
-      "requirements": {
-        "min_level": 2
+    "available_actions": ["explore", "rest", "hunt"],
+    "bosses": [
+      {
+        "id": "pine_baron",
+        "name": "Хвойный Барон",
+        "description": "Więzy się w koronach drzew, atakuje z zaskoczenia.",
+        "hp": 150,
+        "attack": 15,
+        "defense": 10,
+        "speed": 5,
+        "crit_chance": 0.25,
+        "base_reward": 25,
+        "encounter_chance": 0.4,
+        "special_ability": "needle_storm",
+        "loot": [
+          {
+            "item_id": "wolf_fang",
+            "name": "Клык волка",
+            "quantity_min": 1,
+            "quantity_max": 2,
+            "chance": 0.70
+          },
+          {
+            "item_id": "pelt",
+            "name": "Шкура",
+            "quantity_min": 1,
+            "quantity_max": 1,
+            "chance": 0.30
+          }
+        ]
       }
+    ],
+    "events": [
+      {
+        "id": "ambush",
+        "name": "Засада",
+        "description": "Из кустов выскакивает стая волков!",
+        "type": "combat",
+        "trigger_chance": 0.3,
+        "monsters": [
+          {
+            "id": "wolf_alpha",
+            "name": "Вожак стаи",
+            "hp": 80,
+            "attack": 12,
+            "defense": 5,
+            "crit_chance": 0.20,
+            "min_level": 1
+          }
+        ]
+      },
+      {
+        "id": "herbalist",
+        "name": "Травница",
+        "description": "Старая травница предлагает зелья.",
+        "type": "npc",
+        "trigger_chance": 0.2,
+        "npc_id": "herbalist_marya"
+      }
+    ],
+    "items": [
+      {
+        "id": "healing_herb",
+        "name": "Целебная трава",
+        "type": "consumable",
+        "effect": "heal_20",
+        "rarity": "common",
+        "value": 15,
+        "quantity": 1
+      },
+      {
+        "id": "wolf_fang",
+        "name": "Клык волка",
+        "type": "material",
+        "rarity": "common",
+        "value": 10,
+        "quantity": 1
+      }
+    ],
+    "danger_level": "medium",
+    "tags": ["forest", "dark", "magic"],
+    "is_active": true
+  },
+  "abandoned_mine": {
+    "id": "abandoned_mine",
+    "name": "Заброшенная шахта",
+    "description": "Заброшенные шахты, где водятся тролли и гоблины.",
+    "difficulty": 2,
+    "entry_cost": 15,
+    "requirements": {
+      "min_level": 2
     },
-    {
-      "id": "dragon_lair",
-      "name": "Логово дракона",
-      "emoji": "🐉",
-      "description": "Пещера, где обитает древний дракон. Воздух здесь пропитан запахом серы и золота.",
-      "entry_cost": 25,
-      "bosses": [
-        {
-          "id": "ancient_dragon",
-          "name": "Древний дракон",
-          "title": "Повелитель пламени",
-          "emoji": "🐉",
-          "hp": 500,
-          "damage": 45,
-          "defense": 25,
-          "special_ability": "fire_breath",
-          "loot": [
-            {
-              "id": "pine_hero",
-              "name": "Хвойный герой",
-              "emoji": "🌲",
-              "rarity": "rare",
-              "duel_item_id": "pine_hero",
-              "effect": "Curse"
-            }
-          ],
-          "base_reward": 100,
-          "encounter_chance": 0.3
-        },
-        {
-          "id": "dragon_whelp",
-          "name": "Дракончик",
-          "title": "Огненный отродок",
-          "emoji": "🦎",
-          "hp": 80,
-          "damage": 18,
-          "defense": 5,
-          "special_ability": "fire_spit",
-          "loot": [
-            {
-              "id": "cigarette",
-              "name": "🚬 Сигарета",
-              "rarity": "common",
-              "duel_item_id": "cigarette",
-              "effect": "Curse"
-            }
-          ],
-          "base_reward": 15,
-          "encounter_chance": 0.7
-        }
-      ],
-      "items": [
-        {
-          "id": "dragon_scale",
-          "name": "Драконья чешуя",
-          "emoji": "🐉",
-          "rarity": "legendary",
-          "value": 100,
-          "drop_chance": 0.05
-        },
-        {
-          "id": "golden_chalice",
-          "name": "Золотой кубок",
-          "emoji": "🏆",
-          "rarity": "epic",
-          "value": 60,
-          "drop_chance": 0.1
-        }
-      ],
-      "events": [
-        {
-          "id": "treasure_hoard",
-          "name": "Сокровищница",
-          "description": "Ты нашел гору золота дракона и забрал 50 монет, пока он спит!",
-          "effect": "gain_gold",
-          "value": 50,
-          "chance": 0.05
-        },
-        {
-          "id": "dragon_awakening",
-          "name": "Пробуждение дракона",
-          "description": "Дракон проснулся! Придется сражаться или убегать, получив 30 урона.",
-          "effect": "damage",
-          "value": 30,
-          "chance": 0.2
-        }
-      ],
-      "requirements": {
-        "min_level": 5
+    "available_actions": ["dig", "explore", "rest"],
+    "bosses": [
+      {
+        "id": "mine_troll",
+        "name": "Шахтный тролль",
+        "description": "Огромный тролль, охраняющий заброшенные шахты.",
+        "hp": 200,
+        "attack": 20,
+        "defense": 15,
+        "speed": 3,
+        "crit_chance": 0.10,
+        "base_reward": 50,
+        "encounter_chance": 0.35,
+        "special_ability": "stone_skin",
+        "loot": [
+          {
+            "item_id": "troll_skin",
+            "name": "Кожа тролля",
+            "quantity_min": 1,
+            "quantity_max": 1,
+            "chance": 0.60
+          },
+          {
+            "item_id": "diamond_shard",
+            "name": "Осколок алмаза",
+            "quantity_min": 1,
+            "quantity_max": 1,
+            "chance": 0.15
+          }
+        ]
+      },
+      {
+        "id": "goblin_shaman",
+        "name": "Гоблин-шаман",
+        "description": "Хитрый шаман, использующий тёмную магию.",
+        "hp": 120,
+        "attack": 25,
+        "defense": 5,
+        "speed": 8,
+        "crit_chance": 0.20,
+        "base_reward": 35,
+        "encounter_chance": 0.25,
+        "special_ability": "fireball",
+        "loot": [
+          {
+            "item_id": "magic_scroll",
+            "name": "Магический свиток",
+            "quantity_min": 1,
+            "quantity_max": 1,
+            "chance": 0.50
+          },
+          {
+            "item_id": "shaman_staff",
+            "name": "Посох шамана",
+            "quantity_min": 1,
+            "quantity_max": 1,
+            "chance": 0.20
+          }
+        ]
       }
-    }
-  ]
+    ],
+    "events": [
+      {
+        "id": "go_down",
+        "name": "Спуск в шахту",
+        "description": "Опасный спуск в заброшенные шахты.",
+        "type": "trap",
+        "trigger_chance": 0.2,
+        "damage": 15
+      }
+    ],
+    "items": [
+      {
+        "id": "healing_herb",
+        "name": "Целебная трава",
+        "type": "consumable",
+        "effect": "heal_20",
+        "rarity": "common",
+        "value": 15,
+        "quantity": 1
+      },
+      {
+        "id": "diamond_shard",
+        "name": "Осколок алмаза",
+        "type": "material",
+        "rarity": "rare",
+        "value": 50,
+        "quantity": 1
+      }
+    ],
+    "danger_level": "high",
+    "tags": ["mining", "underground", "dangerous"],
+    "is_active": true
+  },
+  "dragon_lair": {
+    "id": "dragon_lair",
+    "name": "Логово дракона",
+    "description": "Опасное логово, где обитает древний дракон.",
+    "difficulty": 3,
+    "entry_cost": 25,
+    "requirements": {
+      "min_level": 5
+    },
+    "available_actions": ["explore", "hunt", "rest"],
+    "bosses": [
+      {
+        "id": "elder_dragon",
+        "name": "Древний дракон",
+        "description": "Древний дракон, чье дыхание способно испепелить всё на своем пути.",
+        "hp": 500,
+        "attack": 45,
+        "defense": 25,
+        "speed": 6,
+        "crit_chance": 0.30,
+        "base_reward": 150,
+        "encounter_chance": 0.25,
+        "special_ability": "fire_breath",
+        "loot": [
+          {
+            "item_id": "dragon_scale",
+            "name": "Чешуя дракона",
+            "quantity_min": 1,
+            "quantity_max": 2,
+            "chance": 0.40
+          },
+          {
+            "item_id": "ancient_ring",
+            "name": "Древнее кольцо",
+            "quantity_min": 1,
+            "quantity_max": 1,
+            "chance": 0.10
+          }
+        ]
+      },
+      {
+        "id": "whelp",
+        "name": "Дракончик",
+        "description": "Молодой дракон, обучающийся охоте.",
+        "hp": 80,
+        "attack": 18,
+        "defense": 5,
+        "speed": 8,
+        "crit_chance": 0.15,
+        "base_reward": 20,
+        "encounter_chance": 0.3,
+        "special_ability": "fire_spit",
+        "loot": [
+          {
+            "item_id": "small_scale",
+            "name": "Маленькая чешуйка",
+            "quantity_min": 1,
+            "quantity_max": 3,
+            "chance": 0.70
+          },
+          {
+            "item_id": "whelp_claw",
+            "name": "Коготь дракончика",
+            "quantity_min": 1,
+            "quantity_max": 2,
+            "chance": 0.50
+          }
+        ]
+      }
+    ],
+    "events": [
+      {
+        "id": "lava_trap",
+        "name": "Лавовая ловушка",
+        "description": "Пол раскалился докрасна!",
+        "type": "trap",
+        "trigger_chance": 0.2,
+        "damage": 30
+      }
+    ],
+    "items": [
+      {
+        "id": "healing_herb",
+        "name": "Целебная трава",
+        "type": "consumable",
+        "effect": "heal_20",
+        "rarity": "common",
+        "value": 15,
+        "quantity": 1
+      },
+      {
+        "id": "dragon_scale",
+        "name": "Чешуя дракона",
+        "type": "material",
+        "rarity": "epic",
+        "value": 100,
+        "quantity": 1
+      }
+    ],
+    "danger_level": "extreme",
+    "tags": ["fire", "ancient", "legendary"],
+    "is_active": true
+  }
 }
