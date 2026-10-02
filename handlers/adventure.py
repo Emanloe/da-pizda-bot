@@ -309,7 +309,7 @@ async def adventure_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     locations = load_locations()
     text = _get_text("adventure.welcome")
     await update.effective_message.reply_text(
-        text, reply_markup=_locations_keyboard(locations)
+        text, reply_markup=_locations_keyboard(locations), parse_mode='HTML'
     )
 
 
@@ -331,6 +331,7 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text(
             _get_text("adventure.welcome"),
             reply_markup=_locations_keyboard(locations),
+            parse_mode='HTML',
         )
         return
 
@@ -338,7 +339,7 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Cancel / close
     # ------------------------------------------------------------------
     if data == "adv_cancel":
-        await query.edit_message_text(_get_text("adventure.cancelled"))
+        await query.edit_message_text(_get_text("adventure.cancelled"), parse_mode='HTML')
         return
 
     # ------------------------------------------------------------------
@@ -349,12 +350,12 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         locations = load_locations()
         loc = locations.get(loc_id)
         if not loc:
-            await query.edit_message_text(_get_text("adventure.unknown"))
+            await query.edit_message_text(_get_text("adventure.unknown"), parse_mode='HTML')
             return
 
         bosses = loc.get("bosses", [])
         if not bosses:
-            await query.edit_message_text(_get_text("adventure.no_bosses"))
+            await query.edit_message_text(_get_text("adventure.no_bosses"), parse_mode='HTML')
             return
 
         loc_text = _get_text(
@@ -365,6 +366,7 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text(
             loc_text,
             reply_markup=_bosses_keyboard(bosses, loc_id),
+            parse_mode='HTML',
         )
         return
 
@@ -396,7 +398,8 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if _is_on_cooldown(player):
             mins = _cooldown_remaining(player)
             await query.edit_message_text(
-                _get_text("adventure.cooldown", minutes=mins)
+                _get_text("adventure.cooldown", minutes=mins),
+                parse_mode='HTML',
             )
             return
 
@@ -404,7 +407,8 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         price = boss.get("price", 0)
         if player.get("gold", 0) < price:
             await query.edit_message_text(
-                _get_text("adventure.not_enough_gold", price=price)
+                _get_text("adventure.not_enough_gold", price=price),
+                parse_mode='HTML',
             )
             return
 
@@ -424,6 +428,7 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text(
             hp_warning + confirm_text,
             reply_markup=_confirm_keyboard(loc_id, boss_idx),
+            parse_mode='HTML',
         )
         return
 
@@ -456,14 +461,16 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if _is_on_cooldown(player):
             mins = _cooldown_remaining(player)
             await query.edit_message_text(
-                _get_text("adventure.cooldown", minutes=mins)
+                _get_text("adventure.cooldown", minutes=mins),
+                parse_mode='HTML',
             )
             return
 
         price = boss.get("price", 0)
         if player.get("gold", 0) < price:
             await query.edit_message_text(
-                _get_text("adventure.not_enough_gold", price=price)
+                _get_text("adventure.not_enough_gold", price=price),
+                parse_mode='HTML',
             )
             return
 
@@ -519,8 +526,10 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     hp_left=new_hp,
                     loot=loot_str,
                     xp=xp_gain,
-                )
+                ),
+                parse_mode='HTML',
             )
+            return
         else:
             # defeat
             player["total_fights"] = player.get("total_fights", 0) + 1
@@ -533,36 +542,12 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     "adventure.defeat",
                     boss_name=result["boss_name"],
                     rounds=len(result["rounds"]),
-                    hp_left=new_hp,
-                )
-            )
-        return
-
-    # ------------------------------------------------------------------
-    # Heal command (future expansion)
-    # ------------------------------------------------------------------
-    if data == "adv_heal":
-        player = get_player(user.id)
-        max_hp = player.get("max_hp", 100)
-        if player.get("hp", 0) >= max_hp:
-            await query.edit_message_text(_get_text("adventure.already_full_hp"))
-            return
-        # simple heal: restore to full, costs 50 gold
-        heal_cost = 50
-        if player.get("gold", 0) < heal_cost:
-            await query.edit_message_text(
-                _get_text("adventure.not_enough_gold", price=heal_cost)
+                ),
+                parse_mode='HTML',
             )
             return
-        player["gold"] -= heal_cost
-        player["hp"] = max_hp
-        raw_data = load_player_data()
-        raw_data[_player_key(user.id)] = player
-        save_player_data(raw_data)
-        await query.edit_message_text(
-            _get_text("adventure.healed", hp=max_hp, cost=heal_cost)
-        )
-        return
 
-    # unknown
-    await query.edit_message_text(_get_text("adventure.unknown"))
+
+async def adventure_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generic handler for adventure inline buttons (fallback)."""
+    await adventure_callback(update, context)
