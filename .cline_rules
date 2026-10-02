@@ -1,0 +1,4 @@
+# Rules for Cline
+
+1. Do not perform unnecessary actions. Only use tools when required by the user's request. Avoid proactive edits, formatting, linting, or file modifications that were not explicitly asked for.
+2. Do not perform destructive Git operations (e.g., `git reset --hard`, force pushes, branch deletion, or any action that rewrites history or loses commits).
