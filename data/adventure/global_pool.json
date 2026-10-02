@@ -20,24 +20,24 @@
       "encounter_chance": 0.15,
       "special_behavior": "friendly_merchant"
     },
-    {
-      "id": "shadow_assassin",
-      "name": "Теневой убийца",
-      "emoji": "🥷",
-      "hp": 70,
-      "damage": 35,
-      "defense": 8,
-      "loot": [
         {
-          "id": "shadow_blade",
-          "name": "Теневой клинок",
-          "emoji": "⚔️",
-          "rarity": "rare",
-          "value": 30
-        }
-      ],
-      "encounter_chance": 0.1
-    },
+          "id": "ya_mudak",
+          "name": "Я мудак",
+          "hp": 50,
+          "damage": 10,
+          "defense": 2,
+          "loot": [
+            {
+              "id": "cigarette",
+              "name": "🚬 Сигарета",
+              "rarity": "common",
+              "duel_item_id": "cigarette",
+              "effect": "Curse"
+            }
+          ],
+          "base_reward": 10,
+          "encounter_chance": 0.75
+        },
     {
       "id": "lost_knight",
       "name": "Заблудший рыцарь",

@@ -8,38 +8,47 @@
       "difficulty": "easy",
       "unique_bosses": [
         {
-          "id": "forest_wolf",
-          "name": "Волк-alfa",
-          "emoji": "🐺",
-          "hp": 80,
-          "damage": 15,
-          "defense": 5,
+          "id": "pine_baron",
+          "name": "Хвойный Барон",
+          "emoji": "🌲",
+          "title": "Владыка лесных чащ",
+          "hp": 150,
+          "damage": 18,
+          "defense": 8,
+          "special_ability": {
+            "name": "Шёпот ветвей",
+            "description": "На 3-й ход замедляет атаку противника на 15%",
+            "trigger_turn": 3,
+            "effect": "speed_debuff",
+            "effect_value": 0.15
+          },
           "loot": [
             {
-              "id": "wolf_fang",
-              "name": "Клык волка",
-              "emoji": "🦷",
+              "id": "baron_crown",
+              "name": "Корона Хвойного Барона",
+              "emoji": "👑",
+              "rarity": "rare",
+              "value": 35,
+              "duel_item_id": "pine_needle",
+              "effect": "Empowerment"
+            },
+            {
+              "id": "mossy_branch",
+              "name": "Мшистая ветвь",
+              "emoji": "🌿",
               "rarity": "uncommon",
-              "value": 10
-            }
-          ]
-        },
-        {
-          "id": "forest_bandit",
-          "name": "Разбойник",
-          "emoji": "🥷",
-          "hp": 60,
-          "damage": 20,
-          "defense": 3,
-          "loot": [
+              "value": 12
+            },
             {
-              "id": "rusty_dagger",
-              "name": "Ржавый кинжал",
-              "emoji": "🗡️",
+              "id": "forest_token",
+              "name": "Лесной жетон",
+              "emoji": "🪙",
               "rarity": "common",
               "value": 5
             }
-          ]
+          ],
+          "base_reward": 30,
+          "encounter_chance": 0.4
         }
       ],
       "unique_items": [
@@ -70,35 +79,59 @@
           "id": "cave_troll",
           "name": "Пещерный тролль",
           "emoji": "👹",
+          "title": "Хранитель недр",
           "hp": 150,
           "damage": 25,
           "defense": 10,
+          "special_ability": {
+            "name": "Каменная кожа",
+            "description": "На 2-й и 4-й ходы увеличивает защиту на 3 единицы",
+            "trigger_turn": 2,
+            "effect": "defense_up",
+            "effect_value": 3
+          },
           "loot": [
             {
               "id": "troll_skin",
               "name": "Шкура тролля",
               "emoji": "🟤",
               "rarity": "rare",
-              "value": 25
+              "value": 25,
+              "duel_item_id": "rope",
+              "effect": "Poison"
             }
-          ]
+          ],
+          "base_reward": 25,
+          "encounter_chance": 0.35
         },
         {
           "id": "goblin_shaman",
           "name": "Гоблин-шаман",
           "emoji": "🧌",
+          "title": "Тотемный чародей",
           "hp": 90,
           "damage": 30,
           "defense": 5,
+          "special_ability": {
+            "name": "Тотемное проклятие",
+            "description": "На 1-м ходу накладывает дебафф на урон противника (-20% на 2 хода)",
+            "trigger_turn": 1,
+            "effect": "damage_debuff",
+            "effect_value": 0.2
+          },
           "loot": [
             {
               "id": "magic_bone",
               "name": "Магическая кость",
               "emoji": "🦴",
               "rarity": "uncommon",
-              "value": 15
+              "value": 15,
+              "duel_item_id": "bone",
+              "effect": "Empowerment"
             }
-          ]
+          ],
+          "base_reward": 20,
+          "encounter_chance": 0.45
         }
       ],
       "unique_items": [
@@ -129,42 +162,68 @@
           "id": "ancient_dragon",
           "name": "Древний дракон",
           "emoji": "🐲",
+          "title": "Повелитель небес",
           "hp": 300,
           "damage": 50,
           "defense": 20,
+          "special_ability": {
+            "name": "Драконье дыхание",
+            "description": "На 2-м и 5-м ходах наносит огненный урон, игнорирующий защиту",
+            "trigger_turn": 2,
+            "effect": "fire_damage",
+            "effect_value": 40
+          },
           "loot": [
             {
               "id": "dragon_scale",
               "name": "Чешуя дракона",
               "emoji": "🛡️",
               "rarity": "epic",
-              "value": 50
+              "value": 50,
+              "duel_item_id": "dragon_scale",
+              "effect": "Regeneration"
             },
             {
               "id": "dragon_eye",
               "name": "Глаз дракона",
               "emoji": "👁️",
               "rarity": "legendary",
-              "value": 100
+              "value": 100,
+              "duel_item_id": "eyeball",
+              "effect": "Invisibility"
             }
-          ]
+          ],
+          "base_reward": 70,
+          "encounter_chance": 0.3
         },
         {
           "id": "dragon_whelp",
           "name": "Дракончик",
           "emoji": "🦎",
+          "title": "Юный огнедышащий",
           "hp": 120,
           "damage": 35,
           "defense": 12,
+          "special_ability": {
+            "name": "Пламенный плевок",
+            "description": "На 3-м ходу наносит дополнительный урон огнём (+15 урона)",
+            "trigger_turn": 3,
+            "effect": "fire_damage",
+            "effect_value": 15
+          },
           "loot": [
             {
               "id": "small_scale",
               "name": "Маленькая чешуйка",
               "emoji": "🔹",
               "rarity": "rare",
-              "value": 20
+              "value": 20,
+              "duel_item_id": "dragon_scale",
+              "effect": "Regeneration"
             }
-          ]
+          ],
+          "base_reward": 35,
+          "encounter_chance": 0.5
         }
       ],
       "unique_items": [
