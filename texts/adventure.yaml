@@ -1,5 +1,4 @@
-adventure:
-  welcome: |
+welcome: |
     🗺️ <b>Доступные локации</b>
     Выберите, куда отправитесь:
 
@@ -25,7 +24,7 @@ adventure:
   low_hp_warning: |
     ⚠️ У вас мало здоровья: {hp} HP!
 
-  confirm_fight: |
+confirm_fight: |
     ⚔️ <b>{boss_name}</b>
     💰 Цена: {price}
     ❤️ HP босса: {hp}
@@ -33,7 +32,7 @@ adventure:
 
     Начать бой?
 
-  victory: |
+victory: |
     🏆 <b>Победа!</b>
     Повержен: {boss_name}
     Раундов: {rounds}
@@ -44,40 +43,40 @@ adventure:
 
     ⭐ Опыт: +{xp}
 
-  defeat: |
+defeat: |
     💀 <b>Поражение...</b>
     Вас одолел: {boss_name}
     Раундов: {rounds}
     ❤️ Ваше HP: {hp_left}
 
-  already_full_hp: "❤️ У вас полное здоровье!"
+already_full_hp: "❤️ У вас полное здоровье!"
 
-  healed: |
+healed: |
     ❤️‍🩹 Восстановлено полное здоровье!
     💰 Потрачено: {cost} золота
 
-  no_loot: "Ничего не найдено."
+no_loot: "Ничего не найдено."
 
-  low_level: |
+low_level: |
     🔒 Требуется уровень {level}
     Прокачайтесь, чтобы открыть эту локацию.
 
-  # Fallback / legacy keys
-  result: |
+# Fallback / legacy keys
+result: |
     🏆 <b>Результаты приключения</b> 🏆
     Результат: {result}
     Опыт: +{xp}
     Золото: +{gold}
 
-  # Menu references (used from menu.yaml)
-  adventure_menu: |
+# Menu references (used from menu.yaml)
+adventure_menu: |
     🗺️ <b>Приключения</b>
     Отправляйтесь в опасные локации и сражайтесь с боссами!
     
     Доступные команды:
     • /adventure - Выбрать локацию
     • /adventure_stats - Ваша статистика
-  adventure_stats: |
+adventure_stats: |
     📊 <b>Статистика приключений</b>
     
     Локации пройдено: {locations}
@@ -85,33 +84,33 @@ adventure:
     Золота добыто: {gold}
     Всего опыта: {xp}
 
-  # Error handling
-  error: "Произошла ошибка. Попробуйте снова."
-  timeout: "Время вышло. Команда отменена."
-  busy: "Вы уже в приключении. Дождитесь окончания."
+# Error handling
+error: "Произошла ошибка. Попробуйте снова."
+timeout: "Время вышло. Команда отменена."
+busy: "Вы уже в приключении. Дождитесь окончания."
 
-  # Location selection
-  select_location: "Выберите локацию для приключения"
-  location_locked: |
+# Location selection
+select_location: "Выберите локацию для приключения"
+location_locked: |
     🔒 <b>Локация закрыта</b>
     Требуется уровень: {level}
     
     Прокачайтесь чтобы открыть доступ.
 
-  # Boss selection
-  select_boss: |
+# Boss selection
+select_boss: |
     ⚔️ <b>Выберите босса</b>
     
     Доступные противники:
 
-  boss_info: |
+boss_info: |
     💀 <b>{name}</b>
     ❤️ HP: {hp}
     💣 Крит: {crit}%
     💰 Цена: {price}
 
-  # Combat
-  combat_start: |
+# Combat
+combat_start: |
     ⚔️ <b>Начался бой!</b>
     
     Противник: {boss_name}
@@ -119,7 +118,7 @@ adventure:
     
     {round_info}
 
-  combat_round: |
+combat_round: |
     🔄 <b>Раунд {round}</b>
     
     {your_attack}
@@ -128,33 +127,33 @@ adventure:
     ❤️ Ваше HP: {hp}
     ❤️ Босс HP: {hp_boss}
 
-  your_attack_hit: "✅ Ваш удар попал! {damage} урона"
-  your_attack_miss: "❌ Ваш удар промахнулся!"
-  your_attack_crit: "💣 КРИТИЧЕСКИЙ УДАР! {damage} урона!"
+your_attack_hit: "✅ Ваш удар попал! {damage} урона"
+your_attack_miss: "❌ Ваш удар промахнулся!"
+your_attack_crit: "💣 КРИТИЧЕСКИЙ УДАР! {damage} урона!"
 
-  boss_attack_hit: "⚔️ Босс ударил вас на {damage} урона"
-  boss_attack_miss: "🛡️ Босс промахнулся!"
-  boss_attack_crit: "💣 Босс КРИТИЧЕСКИ ударил! {damage} урона!"
+boss_attack_hit: "⚔️ Босс ударил вас на {damage} урона"
+boss_attack_miss: "🛡️ Босс промахнулся!"
+boss_attack_crit: "💣 Босс КРИТИЧЕСКИ ударил! {damage} урона!"
 
-  # Items and abilities
-  use_item: "🎒 Использовать предмет: {item_name}"
-  item_used: "✨ {item_name} активирован! {effect}"
-  item_not_enough: "❌ Недостаточно такого предмета"
-  item_not_found: "❌ Такой предмет не найден"
+# Items and abilities
+use_item: "🎒 Использовать предмет: {item_name}"
+item_used: "✨ {item_name} активирован! {effect}"
+item_not_enough: "❌ Недостаточно такого предмета"
+item_not_found: "❌ Такой предмет не найден"
 
-  heal_ability: "❤️‍🩹 Лечение: восстановить {amount} HP"
-  heal_used: "✨ Здоровье восстановлено! +{healed} HP"
-  heal_full: "✅ У вас полное здоровье"
-  heal_not_enough_gold: "💰 Недостаточно золота для лечения"
+heal_ability: "❤️‍🩹 Лечение: восстановить {amount} HP"
+heal_used: "✨ Здоровье восстановлено! +{healed} HP"
+heal_full: "✅ У вас полное здоровье"
+heal_not_enough_gold: "💰 Недостаточно золота для лечения"
 
-  # Rewards
-  reward_gold: "💰 Золото: +{gold}"
-  reward_xp: "⭐ Опыт: +{xp}"
-  reward_item: "🎒 Предмет: {item_name}"
-  reward_item_rare: "🌟 РЕДКИЙ ПРЕДМЕТ: {item_name}!"
+# Rewards
+reward_gold: "💰 Золото: +{gold}"
+reward_xp: "⭐ Опыт: +{xp}"
+reward_item: "🎒 Предмет: {item_name}"
+reward_item_rare: "🌟 РЕДКИЙ ПРЕДМЕТ: {item_name}!"
 
-  # Levels
-  level_up: |
+# Levels
+level_up: |
     ⭐ <b>НОВЫЙ УРОВЕНЬ!</b> ⭐
     
     Вы достигли уровня {level}!
@@ -162,31 +161,31 @@ adventure:
     
     🎉 Поздравляем!
 
-  location_unlocked: |
+location_unlocked: |
     🗺️ <b>Новая локация открыта!</b>
     
     Теперь доступна: {location_name}
     
     Отправляйтесь исследовать новые земли!
 
-  # Special messages
-  critical_defeat: |
+# Special messages
+critical_defeat: |
     💀 <b>Сокрушительное поражение!</b>
     
     Босс {boss_name} разгромил вас за {rounds} раундов!
     HP осталось: {hp_left}
 
-  close_call: |
+close_call: |
     🎉 <b>Победа в последний момент!</b>
     
     Осталось всего {hp_left} HP!
     Но {boss_name} повержен!
 
-  # State messages
-  searching_location: "🔍 Ищем доступные локации..."
-  searching_boss: "🔍 Ищем боссов..."
-  preparing_combat: "⚔️ Подготовка к бою..."
+# State messages
+searching_location: "🔍 Ищем доступные локации..."
+searching_boss: "🔍 Ищем боссов..."
+preparing_combat: "⚔️ Подготовка к бою..."
 
-  # Validation
-  must_be_online: "Вы должны быть онлайн для приключений."
-  cannot_adventure: "В данный момент приключения недоступны."
+# Validation
+must_be_online: "Вы должны быть онлайн для приключений."
+cannot_adventure: "В данный момент приключения недоступны."
