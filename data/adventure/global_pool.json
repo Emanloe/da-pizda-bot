@@ -1,0 +1,106 @@
+{
+  "description": "Общий пул боссов и предметов, которые могут встретиться в любой локации",
+  "bosses": [
+    {
+      "id": "wandering_merchant",
+      "name": "Бродячий торговец",
+      "emoji": "🧳",
+      "hp": 50,
+      "damage": 10,
+      "defense": 2,
+      "loot": [
+        {
+          "id": "mysterious_pouch",
+          "name": "Таинственный мешочек",
+          "emoji": "🎒",
+          "rarity": "uncommon",
+          "value": 15
+        }
+      ],
+      "encounter_chance": 0.15,
+      "special_behavior": "friendly_merchant"
+    },
+    {
+      "id": "shadow_assassin",
+      "name": "Теневой убийца",
+      "emoji": "🥷",
+      "hp": 70,
+      "damage": 35,
+      "defense": 8,
+      "loot": [
+        {
+          "id": "shadow_blade",
+          "name": "Теневой клинок",
+          "emoji": "⚔️",
+          "rarity": "rare",
+          "value": 30
+        }
+      ],
+      "encounter_chance": 0.1
+    },
+    {
+      "id": "lost_knight",
+      "name": "Заблудший рыцарь",
+      "emoji": "🛡️",
+      "hp": 100,
+      "damage": 22,
+      "defense": 15,
+      "loot": [
+        {
+          "id": "knight_emblem",
+          "name": "Эмблема рыцаря",
+          "emoji": "🏅",
+          "rarity": "uncommon",
+          "value": 18
+        }
+      ],
+      "encounter_chance": 0.12
+    }
+  ],
+  "items": [
+    {
+      "id": "healing_herb",
+      "name": "Целебная трава",
+      "emoji": "🌿",
+      "rarity": "common",
+      "value": 5,
+      "drop_chance": 0.25,
+      "effect": "heal"
+    },
+    {
+      "id": "ancient_coin",
+      "name": "Древняя монета",
+      "emoji": "🪙",
+      "rarity": "common",
+      "value": 7,
+      "drop_chance": 0.3
+    },
+    {
+      "id": "magic_scroll",
+      "name": "Магический свиток",
+      "emoji": "📜",
+      "rarity": "uncommon",
+      "value": 15,
+      "drop_chance": 0.15,
+      "effect": "boost_damage"
+    },
+    {
+      "id": "cursed_ring",
+      "name": "Проклятое кольцо",
+      "emoji": "💍",
+      "rarity": "rare",
+      "value": 25,
+      "drop_chance": 0.08,
+      "effect": "curse"
+    },
+    {
+      "id": "lucky_charm",
+      "name": "Амулет удачи",
+      "emoji": "🍀",
+      "rarity": "uncommon",
+      "value": 12,
+      "drop_chance": 0.12,
+      "effect": "luck"
+    }
+  ]
+}

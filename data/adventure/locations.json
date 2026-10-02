@@ -1,0 +1,188 @@
+{
+  "locations": [
+    {
+      "id": "dark_forest",
+      "name": "🌲 Темный лес",
+      "description": "Густой лес, где водятся голодные волки и разбойники.",
+      "cost": 5,
+      "difficulty": "easy",
+      "unique_bosses": [
+        {
+          "id": "forest_wolf",
+          "name": "Волк-alfa",
+          "emoji": "🐺",
+          "hp": 80,
+          "damage": 15,
+          "defense": 5,
+          "loot": [
+            {
+              "id": "wolf_fang",
+              "name": "Клык волка",
+              "emoji": "🦷",
+              "rarity": "uncommon",
+              "value": 10
+            }
+          ]
+        },
+        {
+          "id": "forest_bandit",
+          "name": "Разбойник",
+          "emoji": "🥷",
+          "hp": 60,
+          "damage": 20,
+          "defense": 3,
+          "loot": [
+            {
+              "id": "rusty_dagger",
+              "name": "Ржавый кинжал",
+              "emoji": "🗡️",
+              "rarity": "common",
+              "value": 5
+            }
+          ]
+        }
+      ],
+      "unique_items": [
+        {
+          "id": "mushroom",
+          "name": "Лесной гриб",
+          "emoji": "🍄",
+          "rarity": "common",
+          "value": 3
+        },
+        {
+          "id": "forest_berry",
+          "name": "Ягодка",
+          "emoji": "🫐",
+          "rarity": "common",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "id": "abandoned_mine",
+      "name": "⛏️ Заброшенная шахта",
+      "description": "Опасные подземелья с гоблинами и пещерными троллями.",
+      "cost": 10,
+      "difficulty": "medium",
+      "unique_bosses": [
+        {
+          "id": "cave_troll",
+          "name": "Пещерный тролль",
+          "emoji": "👹",
+          "hp": 150,
+          "damage": 25,
+          "defense": 10,
+          "loot": [
+            {
+              "id": "troll_skin",
+              "name": "Шкура тролля",
+              "emoji": "🟤",
+              "rarity": "rare",
+              "value": 25
+            }
+          ]
+        },
+        {
+          "id": "goblin_shaman",
+          "name": "Гоблин-шаман",
+          "emoji": "🧌",
+          "hp": 90,
+          "damage": 30,
+          "defense": 5,
+          "loot": [
+            {
+              "id": "magic_bone",
+              "name": "Магическая кость",
+              "emoji": "🦴",
+              "rarity": "uncommon",
+              "value": 15
+            }
+          ]
+        }
+      ],
+      "unique_items": [
+        {
+          "id": "silver_ore",
+          "name": "Серебряная руда",
+          "emoji": "⬜",
+          "rarity": "uncommon",
+          "value": 12
+        },
+        {
+          "id": "crystal_shard",
+          "name": "Осколок кристалла",
+          "emoji": "💎",
+          "rarity": "rare",
+          "value": 20
+        }
+      ]
+    },
+    {
+      "id": "dragon_lair",
+      "name": "🐉 Логово дракона",
+      "description": "Опаснейшее место, где обитает древний дракон.",
+      "cost": 15,
+      "difficulty": "hard",
+      "unique_bosses": [
+        {
+          "id": "ancient_dragon",
+          "name": "Древний дракон",
+          "emoji": "🐲",
+          "hp": 300,
+          "damage": 50,
+          "defense": 20,
+          "loot": [
+            {
+              "id": "dragon_scale",
+              "name": "Чешуя дракона",
+              "emoji": "🛡️",
+              "rarity": "epic",
+              "value": 50
+            },
+            {
+              "id": "dragon_eye",
+              "name": "Глаз дракона",
+              "emoji": "👁️",
+              "rarity": "legendary",
+              "value": 100
+            }
+          ]
+        },
+        {
+          "id": "dragon_whelp",
+          "name": "Дракончик",
+          "emoji": "🦎",
+          "hp": 120,
+          "damage": 35,
+          "defense": 12,
+          "loot": [
+            {
+              "id": "small_scale",
+              "name": "Маленькая чешуйка",
+              "emoji": "🔹",
+              "rarity": "rare",
+              "value": 20
+            }
+          ]
+        }
+      ],
+      "unique_items": [
+        {
+          "id": "dragon_fire",
+          "name": "Драконий огонь",
+          "emoji": "🔥",
+          "rarity": "epic",
+          "value": 40
+        },
+        {
+          "id": "gold_hoard",
+          "name": "Куча золота",
+          "emoji": "💰",
+          "rarity": "rare",
+          "value": 30
+        }
+      ]
+    }
+  ]
+}
