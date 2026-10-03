@@ -603,12 +603,135 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
 
-async def _expedition_complete_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Called when expedition timer expires."""
-    job = context.job
-    user_id = job.data.get("user_id")
-    loc_id = job.data.get("loc_id")
-    username = job.data.get("username", "Гном")
+def calculate_expedition_result(user_id: int, loc_id: str, username: str) -> tuple:
+    """Calculate and return expedition result. Used by expiration checker."""
+    locations = load_locations()
+    loc = locations.get(loc_id, {})
+    mobs_data = load_mobs()
+    pool = load_global_pool()
+    
+    player = get_player(user_id)
+    current_hp = player.get("hp", 200)
+    max_hp = player.get("max_hp", 200)
+    
+    # Roll resources from location
+    resources_data = loc.get("resources", [])
+    resources = []
+    for resource in resources_data:
+        chance = resource.get("chance", 0)
+        if random.random() < chance:
+            resources.append({"name": resource.get("name", resource.get("id", "Unknown")), "quantity": 1})
+    
+    # 50% chance for encounter during expedition
+    has_encounter = random.random() < 0.5
+    encounter_result = None
+    encounter_mob_name = None
+    encounter_hp_left = current_hp
+    xp_gained = 0
+    hp_healed = 0
+    
+    if has_encounter:
+        mob, mob_desc_key = _select_encounter_mob(loc_id, mobs_data, locations)
+        mob_description = None
+        mob_name_text = None
+        if mob_desc_key:
+            mob_description = _get_text(f"adventure.{mob_desc_key}")
+            mob_name_text = _get_text(f"adventure.{mob_desc_key.replace('_desc', '_name')}")
+        
+        if mob:
+            # Start fight
+            fight_result = _resolve_encounter_fight(current_hp, max_hp, mob)
+            encounter_result = fight_result["encounter_result"]
+            encounter_mob_name = mob_name_text if mob_name_text else mob.get("name", "Неизвестный моб")
+            encounter_hp_left = fight_result["player_hp_left"]
+            
+            if fight_result["winner"] == "player":
+                xp_gained += 10
+                hp_healed = min(20, max_hp - encounter_hp_left)
+                encounter_hp_left += hp_healed
+            else:
+                encounter_hp_left = max(1, encounter_hp_left - 5)
+    
+    # Update player stats
+    new_hp = min(max_hp, encounter_hp_left)
+    update_player(
+        user_id,
+        hp=new_hp,
+        xp=player.get("xp", 0) + xp_gained,
+        active_expedition=None,
+        total_expeditions=player.get("total_expeditions", 0) + 1,
+    )
+    
+    # Save resources to player inventory
+    if resources:
+        inventory = player.get("inventory", [])
+        for res in resources:
+            inventory.append(res)
+        update_player(user_id, inventory=inventory)
+    
+    # Build result message using texts from adventure.yaml
+    result_lines = []
+    
+    # Resources
+    if resources:
+        res_list = "\n".join([_format_resource(r) for r in resources])
+        result_lines.append(_get_text("adventure.expedition_resources", resources=res_list))
+    else:
+        result_lines.append(_get_text("adventure.expedition_no_resources"))
+    
+    # Encounter summary
+    encounters_summary = []
+    encounter_message = None
+    if has_encounter and encounter_mob_name:
+        if encounter_result == "victory":
+            encounters_summary.append(_get_text("adventure.mob_killed", mob_name=encounter_mob_name))
+            if xp_gained > 0:
+                encounters_summary.append(_get_text("adventure.reward_xp", xp=xp_gained))
+            if hp_healed > 0:
+                encounters_summary.append(f"❤️‍🩹 +{hp_healed} HP")
+        elif encounter_result == "defeat":
+            encounters_summary.append(_get_text("adventure.mob_survived", mob_name=encounter_mob_name))
+            encounter_message = _get_text("adventure.expedition_result_failure")
+        else:
+            encounters_summary.append(_get_text("adventure.mob_survived", mob_name=encounter_mob_name))
+    
+    # Determine expedition result status
+    if encounter_result == "defeat":
+        result_status = _get_text("adventure.expedition_result_fail")
+    elif encounter_result == "victory" and resources:
+        result_status = _get_text("adventure.expedition_result_success")
+    elif resources:
+        result_status = _get_text("adventure.expedition_result_success")
+    else:
+        result_status = _get_text("adventure.expedition_result_failure")
+    
+    # Build final summary text
+    summary_lines = [
+        _get_text("adventure.expedition_final_summary",
+            username=username,
+            hp=new_hp,
+            max_hp=max_hp,
+            total_xp=xp_gained,
+            resources_summary="\n".join(result_lines),
+            encounters_summary="\n".join(encounters_summary) if encounters_summary else ""
+        )
+    ]
+    
+    return "\n".join(summary_lines)
+
+
+async def send_expedition_result(user_id: int, loc_id: str, username: str, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Called when expedition timer expires. Used by expiration checker and job_queue.
+    
+    When called from job_queue.run, the function receives context with job data.
+    When called from expiration checker, parameters are passed directly.
+    """
+    # Handle job_queue callback case
+    if context and hasattr(context, 'job') and context.job and context.job.data:
+        job_data = context.job.data
+        user_id = job_data.get("user_id", user_id)
+        loc_id = job_data.get("loc_id", loc_id)
+        username = job_data.get("username", "Гном")
     
     locations = load_locations()
     loc = locations.get(loc_id, {})
