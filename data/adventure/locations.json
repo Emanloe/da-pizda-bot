@@ -1,95 +1,90 @@
 {
   "dark_forest": {
     "id": "dark_forest",
-    "name": "Тёмный лес",
-    "description": "Густой лес, полный опасных тварей и древних секретов.",
+    "name": "Охуенно тёмный лес",
+    "display_name": "🌲Охуенно тёмный лес",
+    "description": "В 🌲Охуенно Тёмном Лесу растет особый вид сосны — 🌲Pinus Absurdus. Её шишки не падают вниз, а выстреливают, попадая прямо в те места, которые гномы берегут больше всего.",
     "difficulty": 1,
     "entry_cost": 10,
     "requirements": {
       "min_level": 1
     },
+    "expedition_duration_seconds": 300,
+    "encounter_chance": 0.50,
     "available_actions": ["explore", "rest", "hunt"],
     "bosses": [
       {
         "id": "pine_baron",
-        "name": "Хвойный Барон",
-        "description": "Więzy się w koronach drzew, atakuje z zaskoczenia.",
+        "name": "🌲👑Хвойный Барон",
+        "display_name": "🌲👑 Хвойный Барон",
+        "description": "Это древний дух леса, принявший облик гигантского, покрытого мхом и лишайниками гуманоида, у которого вместо головы — огромная, пульсирующая смоляная елда. Может спиздить ваши портки или другую случайную вещь из инвентаря.",
         "hp": 150,
         "attack": 15,
         "defense": 10,
         "speed": 5,
         "crit_chance": 0.25,
         "base_reward": 25,
-        "encounter_chance": 0.4,
-        "special_ability": "needle_storm",
+        "encounter_chance": 0.05,
+        "special_ability": "steal_item",
         "loot": [
           {
-            "item_id": "wolf_fang",
-            "name": "Клык волка",
-            "quantity_min": 1,
-            "quantity_max": 2,
-            "chance": 0.70
-          },
-          {
-            "item_id": "pelt",
-            "name": "Шкура",
+            "item_id": "pine_resin",
+            "name": "👑 Смола Барона",
             "quantity_min": 1,
             "quantity_max": 1,
-            "chance": 0.30
+            "chance": 0.02
           }
         ]
       }
     ],
-    "events": [
+    "resources": [
       {
-        "id": "ambush",
-        "name": "Засада",
-        "description": "Из кустов выскакивает стая волков!",
-        "type": "combat",
-        "trigger_chance": 0.3,
-        "monsters": [
-          {
-            "id": "wolf_alpha",
-            "name": "Вожак стаи",
-            "hp": 80,
-            "attack": 12,
-            "defense": 5,
-            "crit_chance": 0.20,
-            "min_level": 1
-          }
-        ]
+        "id": "pine_needles",
+        "name": "🌿 Хвоя",
+        "description": "Обычная сосновая хвоя.",
+        "chance": 0.60,
+        "rarity": "common"
       },
       {
-        "id": "herbalist",
-        "name": "Травница",
-        "description": "Старая травница предлагает зелья.",
-        "type": "npc",
-        "trigger_chance": 0.2,
-        "npc_id": "herbalist_marya"
-      }
-    ],
-    "items": [
-      {
-        "id": "healing_herb",
-        "name": "Целебная трава",
-        "type": "consumable",
-        "effect": "heal_20",
-        "rarity": "common",
-        "value": 15,
-        "quantity": 1
+        "id": "rotten_wood",
+        "name": "🪵 Древесина",
+        "description": "Кусок гнилой доски. Можно сделать дубину или употребить как растопку.",
+        "chance": 0.45,
+        "rarity": "common"
       },
       {
-        "id": "wolf_fang",
-        "name": "Клык волка",
-        "type": "material",
-        "rarity": "common",
-        "value": 10,
-        "quantity": 1
+        "id": "baron_pinecone",
+        "name": "🌰 Шишка",
+        "description": "Шишка Хвойного Барона. Ещё пульсирует.",
+        "chance": 0.35,
+        "rarity": "uncommon"
+      },
+      {
+        "id": "web",
+        "name": "🕸️ Паутина",
+        "description": "Липкая, вонючая, с останками мух. Крафт-материал.",
+        "chance": 0.20,
+        "rarity": "common"
+      },
+      {
+        "id": "pet_egg",
+        "name": "🥚 Яйцо питомца",
+        "description": "Из него может вылупиться что-то полезное.",
+        "chance": 0.05,
+        "rarity": "rare"
+      },
+      {
+        "id": "baron_resin",
+        "name": "👑 Смола Барона",
+        "description": "Редкий ресурс. Используется для крафта брони.",
+        "chance": 0.02,
+        "rarity": "epic"
       }
     ],
     "danger_level": "medium",
-    "tags": ["forest", "dark", "magic"],
-    "is_active": true
+    "tags": ["forest", "dark", "magic", "pine_absurdus"],
+    "is_active": true,
+    "specific_mobs": ["bush_with_requirements", "head_on_spider_legs"]
   },
   "abandoned_mine": {
     "id": "abandoned_mine",

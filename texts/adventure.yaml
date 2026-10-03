@@ -188,4 +188,124 @@ preparing_combat: "⚔️ Подготовка к бою..."
 
 # Validation
 must_be_online: "Вы должны быть онлайн для приключений."
-cannot_adventure: "В данный момент приключения недоступны."
+# Expedition (远征)
+expedition_start: |
+  ⏳ <b>{username}</b> отправился в экспедицию в {location_name}.
+  Экспедиция закончится через {duration} мин.
+
+expedition_completed: |
+  🏁 <b>Экспедиция завершена!</b>
+  
+  {location_name}
+  
+  {result_message}
+
+expedition_result_success: "✅ Экспедиция прошла успешно!"
+expedition_result_failure: "⚠️ Экспедиция завершена с трудом."
+expedition_result_fail: "💀 Экспедиция не удалась..."
+
+expedition_resources: |
+  🎒 <b>Добытые ресурсы:</b>
+  {resources}
+
+expedition_no_resources: "Ничего не добыто."
+
+expedition_encounter_start: |
+  ⚔️ <b>Энкаунтер!</b>
+  
+  {encounter_message}
+  
+  Начался бой!
+
+expedition_encounter_message: |
+  💥 Внезапная атака!
+  На вас напал {mob_name}!
+
+expedition_encounter_victory: |
+  🏆 Победа над {mob_name}!
+  
+  Получено:
+  • ❤️ Лечение: +{healed} HP
+  • ⭐ Опыт: +{xp}
+  {items}
+
+expedition_encounter_defeat: |
+  💀 Поражение от {mob_name}!
+  
+  Экспедиция завершена с потерями.
+
+expedition_boss_encounter: |
+  👑 <b>БОСС!</b>
+  
+  {encounter_message}
+
+expedition_final_summary: |
+  📊 <b>Итоги экспедиции</b>
+  
+  {username}
+  • ❤️ HP осталось: {hp}/{max_hp}
+  • ⭐ Опыт: +{total_xp}
+  {resources_summary}
+  {encounters_summary}
+
+resources_list_item: "• {name}: {quantity} шт."
+encounters_count: "• Боев: {count}"
+mob_killed: "  • {mob_name} повержен"
+mob_survived: "  • {mob_name} убежал"
+
+mob_description: |
+  <i>{description}</i>
+  
+  ❤️ HP: {hp}
+  📊 Уровень: {level}
+
+# Specific mobs for Dark Forest
+bush_with_requirements_name: "🌳Куст с предъявами"
+bush_with_requirements_desc: |
+  Просто куст. Но он шуршит так, что гном инстинктивно прикрывает пах. 
+  Из куста выглядывает пара красных глаз и слышится голос: «А ну покажи, что там у тебя, пездюк!». 
+  Если кусту не понравится размер — куст бьет веткой по рукам.
+  
+  <b>Тактика:</b> Низкий урон, но с шансом 30% вешает дебафф «Паранойя» (гном может пропустить ход, проверяя ширинку).
+  
+  ❤️ HP: 30
+  ⚔️ Урон: 5
+  📊 Уровень: 1
+
+head_on_spider_legs_name: "🕷️Голова деда на паучьих ногах"
+head_on_spider_legs_desc: |
+  Размером с таксу. У него морщинистое лицо, он постоянно что-то пиздит и пытается впиться жвалами в шею гнома.
+  
+  <b>Тактика:</b> Больно кусает. Если не убить за 3 хода — присасывается и высасывает дополнительно по 5 ХП каждый ход.
+  
+  ❤️ HP: 20
+  ⚔️ Урон: 8
+  📊 Уровень: 1
+
+# Special abilities
+ability_paranoida: |
+  <b>🌀 Паранойя</b>
+  Гном пропускает ход, проверяя ширинку
+  
+ability_suck: |
+  <b>🩸 Присасывание</b>
+  Моб присасывается и высасывает по 5 ХП каждый ход
+
+# Resources for Dark Forest
+resource_needle: "🌿 Хвоя"
+resource_needle_desc: "Обычная сосновая хвоя."
+
+resource_wood: "🪵 Древесина"
+resource_wood_desc: "Кусок гнилой доски. Можно сделать дубину или употребить как растопку."
+
+resource_pinecone: "🌰 Шишка"
+resource_pinecone_desc: "Шишка Хвойного Барона. Ещё пульсирует."
+
+resource_web: "🕸️ Паутина"
+resource_web_desc: "Липкая, вонючая, с останками мух. Крафт-материал."
+
+resource_pet_egg: "🥚 Яйцо питомца"
+resource_pet_egg_desc: "Из него может вылупиться что-то полезное."
+
+resource_boss_resin: "👑 Смола Барона"
+resource_boss_resin_desc: "Редкий ресурс. Используется для крафта брони."
