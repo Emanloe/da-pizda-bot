@@ -2,17 +2,15 @@ welcome: |
   🗺️ <b>Доступные локации</b>
   Выберите, куда отправитесь:
 
-# Detailed location info (shown when clicking a location)
+# Detailed location info
 location_detailed_info: |
-  {username} стоит на входе в {name}
-  
-  {description}
-  
-  Уровень: {level}+
+  {username} стоит на входе в {location_emoji}{location_name}
+  {location_description}
+  Уровень: {min_level}+
   Время: {duration} мин
-  Награды: 🌿 Ресурсы, 🥚 Яйца питомцев
-  Босс: {boss_chance}%
-  
+  Награды: {rewards}
+  Босс: {boss_name} ({boss_chance}%)
+
 cancel: "❌ Отмена"
 cancelled: "Отменено."
 unknown: "Неизвестная команда. Попробуйте снова."
@@ -314,3 +312,10 @@ resource_pet_egg_desc: "Из него может вылупиться что-т�
 
 resource_boss_resin: "👑 Смола Барона"
 resource_boss_resin_desc: "Редкий ресурс. Используется для крафта брони."
+
+# Resources loot display
+resources_loot: |
+  🎒 <b>Ресурсы:</b>
+  {resources}
+
+resource_loot_item: "{emoji} {name}: {quantity} шт. {description}"

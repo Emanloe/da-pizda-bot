@@ -481,19 +481,39 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             return
 
-        # Get boss chance from first boss in boss_list
+        # Get boss chance and name from first boss in bosses list
         boss_chance = "0"
-        boss_list = loc.get("boss_list", [])
-        if boss_list:
-            first_boss_id = boss_list[0].get("boss_id", "")
-            boss_chance = str(boss_list[0].get("chance", 5))
+        boss_name = "Нет данных"
+        bosses = loc.get("bosses", [])
+        if bosses:
+            first_boss = bosses[0]
+            boss_name = first_boss.get("display_name", first_boss.get("name", "Нет данных"))
+            boss_chance = str(int(first_boss.get("encounter_chance", 0) * 100))
         
+        # Format rewards from resources (which serves as loot table)
+        rewards_text = _get_text("adventure.resources_loot")  # Default rewards text
+        resources = loc.get("resources", [])
+        if resources:
+            # Build rewards list from resources
+            rewards_items = []
+            for item in resources:
+                item_name = item.get("name", item.get("id", "Resource"))
+                chance = int(item.get("chance", 0) * 100)
+                rewards_items.append(f"{item_name} ({chance}%)")
+            if rewards_items:
+                rewards_text = "• " + "\n• ".join(rewards_items)
+        
+        # Build location detail text
         loc_text = _get_text(
             "adventure.location_detailed_info",
             username=user.username or user.first_name,
-            name=loc.get("name", loc_id),
-            level=loc.get("required_level", 1),
-            duration=loc.get("duration", 300) // 60,
+            location_emoji=loc.get("display_name", "")[:2] if loc.get("display_name") else "🌲",
+            location_name=loc.get("name", loc_id),
+            location_description=loc.get("full_description", ""),
+            min_level=loc.get("requirements", {}).get("min_level", 1),
+            duration=loc.get("duration_minutes", 5),
+            rewards=rewards_text,
+            boss_name=boss_name,
             boss_chance=boss_chance,
         )
         await query.edit_message_text(
@@ -600,8 +620,12 @@ async def _expedition_complete_callback(context: ContextTypes.DEFAULT_TYPE) -> N
     max_hp = player.get("max_hp", 200)
     
     # Roll resources from location
-    loot_table = loc.get("loot_table", [])
-    resources = _roll_loot(loot_table)
+    resources_data = loc.get("resources", [])
+    resources = []
+    for resource in resources_data:
+        chance = resource.get("chance", 0)
+        if random.random() < chance:
+            resources.append({"name": resource.get("name", resource.get("id", "Unknown")), "quantity": 1})
     
     # 50% chance for encounter during expedition
     has_encounter = random.random() < 0.5
@@ -613,11 +637,18 @@ async def _expedition_complete_callback(context: ContextTypes.DEFAULT_TYPE) -> N
     
     if has_encounter:
         mob, mob_desc_key = _select_encounter_mob(loc_id, mobs_data, locations)
+        mob_description = None
+        mob_name_text = None
+        if mob_desc_key:
+            mob_description = _get_text(f"adventure.{mob_desc_key}")
+            mob_name_text = _get_text(f"adventure.{mob_desc_key.replace('_desc', '_name')}")
+        
         if mob:
             # Start fight
             fight_result = _resolve_encounter_fight(current_hp, max_hp, mob)
             encounter_result = fight_result["encounter_result"]
-            encounter_mob_name = fight_result["mob_name"]
+            # Use mob_name_text if available (for specific mobs), otherwise use mob["name"]
+            encounter_mob_name = mob_name_text if mob_name_text else mob.get("name", "Неизвестный моб")
             encounter_hp_left = fight_result["player_hp_left"]
             
             if fight_result["winner"] == "player":
@@ -662,7 +693,8 @@ async def _expedition_complete_callback(context: ContextTypes.DEFAULT_TYPE) -> N
     if has_encounter and encounter_mob_name:
         if encounter_result == "victory":
             encounters_summary.append(_get_text("adventure.mob_killed", mob_name=encounter_mob_name))
-            encounters_summary.append(_get_text("adventure.reward_xp", xp=xp_gained))
+            if xp_gained > 0:
+                encounters_summary.append(_get_text("adventure.reward_xp", xp=xp_gained))
             if hp_healed > 0:
                 encounters_summary.append(f"❤️‍🩹 +{hp_healed} HP")
         elif encounter_result == "defeat":
