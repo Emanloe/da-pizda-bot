@@ -1,0 +1,104 @@
+{
+  "mob_types": {
+    "common": {
+      "names": {
+        "dark_forest": ["Гоблин", "Слепой крыс", "Лесной волк", "Древесный слизень"],
+        "abandoned_mine": ["Шахтёрский призрак", "Каменный паук", "Рудный скелет", "Пещерная летучая мышь"],
+        "dragon_lair": ["Драконий слайм", "Пепельный виверна", "Огненный имп", "Каменный гарпун"]
+      },
+      "stats": {
+        "hp": {"min": 30, "max": 50},
+        "attack": {"min": 8, "max": 15},
+        "defense": {"min": 2, "max": 5},
+        "speed": {"min": 3, "max": 7},
+        "crit_chance": {"min": 0.05, "max": 0.10}
+      }
+    },
+    "uncommon": {
+      "names": {
+        "dark_forest": ["Лесной охотник", "Тёмный эльф", "Медведь-оборотень", "Ядовитая змея"],
+        "abandoned_mine": ["Гном-предатель", "Кристаллический голе", "Подземный скорпион", "Теневая летучка"],
+        "dragon_lair": ["Драконий рыцарь", "Огний саламандра", "Лава-слайм", "Ветреный грифон"]
+      },
+      "stats": {
+        "hp": {"min": 60, "max": 100},
+        "attack": {"min": 15, "max": 25},
+        "defense": {"min": 5, "max": 10},
+        "speed": {"min": 5, "max": 10},
+        "crit_chance": {"min": 0.10, "max": 0.18}
+      }
+    },
+    "rare": {
+      "names": {
+        "dark_forest": ["Лесной король", "Вампир-аристократ", "Древний страж", "Праздничный тролль"],
+        "abandoned_mine": ["Король шахтёров", "Бронированный голе", "Лич подземелья", "Титан руды"],
+        "dragon_lair": ["Полу-дракон", "Архимаг огня", "Стальной левиафан", "Великий грифон"]
+      },
+      "stats": {
+        "hp": {"min": 120, "max": 200},
+        "attack": {"min": 25, "max": 40},
+        "defense": {"min": 10, "max": 20},
+        "speed": {"min": 8, "max": 15},
+        "crit_chance": {"min": 0.15, "max": 0.25}
+      }
+    }
+  },
+  "bosses": {
+    "dark_forest": {
+      "name": "Forest Spirit",
+      "hp": 150,
+      "attack": 20,
+      "defense": 8,
+      "speed": 12,
+      "crit_chance": 0.20,
+      "drops": ["legendary_item", "rare_material", "boss_token"]
+    },
+    "abandoned_mine": {
+      "name": "Mine Guardian",
+      "hp": 300,
+      "attack": 35,
+      "defense": 15,
+      "speed": 8,
+      "crit_chance": 0.15,
+      "drops": ["legendary_item", "rare_material", "boss_token", "mine_key"]
+    },
+    "dragon_lair": {
+      "name": "Ancient Dragon",
+      "hp": 1000,
+      "attack": 80,
+      "defense": 40,
+      "speed": 15,
+      "crit_chance": 0.30,
+      "drops": ["ancient_dragon_trophy", "dragon_scale", "fire_gem", "legendary_weapon"]
+    }
+  },
+  "encounter_weights": {
+    "common": 0.50,
+    "uncommon": 0.30,
+    "rare": 0.15,
+    "boss": 0.05
+  },
+  "combat_zones": ["head", "body", "dick"],
+  "loot_table": {
+    "common": {
+      "items": ["herb", "stone", "wood", "leather"],
+      "gold": {"min": 5, "max": 20},
+      "xp": {"min": 10, "max": 30}
+    },
+    "uncommon": {
+      "items": ["magic_crystal", "enchanted_ore", "rare_herb", "monster_part"],
+      "gold": {"min": 20, "max": 50},
+      "xp": {"min": 30, "max": 70}
+    },
+    "rare": {
+      "items": ["ancient relic", "dragon_scale", "elemental_core", "cursed_gem"],
+      "gold": {"min": 50, "max": 150},
+      "xp": {"min": 70, "max": 150}
+    },
+    "boss": {
+      "items": ["boss_token", "legendary_weapon", "ancient_armor", "unique_trinket"],
+      "gold": {"min": 150, "max": 500},
+      "xp": {"min": 150, "max": 400}
+    }
+  }
+}

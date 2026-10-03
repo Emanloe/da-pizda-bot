@@ -31,6 +31,7 @@ ADVENTURE_DIR = os.path.join(BASE_DIR, "data", "adventure")
 LOCATIONS_PATH = os.path.join(ADVENTURE_DIR, "locations.json")
 GLOBAL_POOL_PATH = os.path.join(ADVENTURE_DIR, "global_pool.json")
 PLAYER_DATA_PATH = os.path.join(ADVENTURE_DIR, "player_data.json")
+MOBS_PATH = os.path.join(ADVENTURE_DIR, "mobs.json")
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +54,10 @@ def load_locations() -> dict[str, Any]:
 
 def load_global_pool() -> dict[str, Any]:
     return _load_json(GLOBAL_POOL_PATH)
+
+
+def load_mobs() -> dict[str, Any]:
+    return _load_json(MOBS_PATH)
 
 
 def load_player_data() -> dict[str, Any]:
@@ -109,40 +114,6 @@ def update_player(user_id: int, **fields) -> None:
     save_player_data(data)
 
 
-# ---------------------------------------------------------------------------
-# Cooldown helpers
-# ---------------------------------------------------------------------------
-
-COOLDOWN_MINUTES = 30
-
-
-def _is_on_cooldown(player: dict[str, Any]) -> bool:
-    last = player.get("last_fight_time")
-    if not last:
-        return False
-    try:
-        # ISO format with Z or +00:00
-        last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
-    except Exception:
-        return False
-    return datetime.now(timezone.utc) < last_dt + timedelta(minutes=COOLDOWN_MINUTES)
-
-
-def _cooldown_remaining(player: dict[str, Any]) -> int:
-    last = player.get("last_fight_time")
-    if not last:
-        return 0
-    try:
-        last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
-    except Exception:
-        return 0
-    delta = (last_dt + timedelta(minutes=COOLDOWN_MINUTES)) - datetime.now(timezone.utc)
-    return max(0, int(delta.total_seconds() // 60))
-
-
-# ---------------------------------------------------------------------------
-# Combat logic
-# ---------------------------------------------------------------------------
 
 def _roll_damage(base: int, variance: int = 3) -> int:
     return max(1, base + random.randint(-variance, variance))
