@@ -391,6 +391,28 @@ def _get_text(key: str, **kwargs) -> str:
         return key
 
 
+async def _expedition_complete_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Callback function for job_queue when expedition completes.
+    
+    Job data should contain: user_id, loc_id, username
+    """
+    job_data = context.job.data if context.job else None
+    if not job_data:
+        logger.error("No job data found for expedition completion")
+        return
+    
+    user_id = job_data.get("user_id")
+    loc_id = job_data.get("loc_id")
+    username = job_data.get("username", "Гном")
+    
+    if not user_id or not loc_id:
+        logger.error(f"Invalid job data: {job_data}")
+        return
+    
+    # Send expedition result
+    await send_expedition_result(user_id, loc_id, username, context)
+
+
 # ---------------------------------------------------------------------------
 # Keyboard builders
 # ---------------------------------------------------------------------------
