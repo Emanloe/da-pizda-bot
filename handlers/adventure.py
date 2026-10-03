@@ -271,35 +271,89 @@ def _format_loot(loot: list[dict[str, Any]], pool: dict[str, Any]) -> str:
 # Expedition helpers
 # ---------------------------------------------------------------------------
 
-def _select_encounter_mob(loc_id: str, mobs_data: dict[str, Any]) -> dict[str, Any] | None:
-    """Select a random mob based on encounter_chance for the location."""
-    # Get specific mobs for this location
-    specific_mobs = mobs_data.get("specific_mobs", {}).get(loc_id, [])
+def _select_encounter_mob(loc_id: str, mobs_data: dict[str, Any], locations: dict[str, Any] | None = None) -> tuple[dict[str, Any], str | None]:
+    """Select a random mob based on encounter_chance for the location.
     
-    if not specific_mobs:
-        # Fallback to generic mob generation if no specific mobs
-        mob_types = mobs_data.get("mob_types", {})
-        encounter_weights = mobs_data.get("encounter_weights", {})
+    Returns tuple of (mob_data, mob_description) where:
+    - mob_data: dict with mob stats for combat
+    - mob_description: formatted description text from adventure.yaml
+    """
+    mob_name_text_key = None
+    mob_desc_text_key = None
+    
+    if locations:
+        loc = locations.get(loc_id, {})
+        # Get specific_mobs as list of mob IDs from location
+        specific_mob_ids = loc.get("specific_mobs", [])
         
-        # Select rarity based on weights
-        rand = random.random()
-        rarity = "common"
-        cumulative = 0
-        for r, weight in encounter_weights.items():
-            cumulative += weight
-            if rand < cumulative:
-                rarity = r
-                break
-        
-        rarity_data = mob_types.get(rarity, {}).get("stats", {})
-        if not rarity_data:
-            return None
-        
-        # Generate random mob
-        names = mob_types.get(rarity, {}).get("names", {}).get(loc_id, [f"{rarity.capitalize()} Mob"])
-        name = random.choice(names)
-        
-        return {
+        if specific_mob_ids:
+            # Build weighted pool from specific mob IDs
+            weighted_pool = []
+            for mob_id in specific_mob_ids:
+                mob_def = mobs_data.get("mobs", {}).get(mob_id, {})
+                if mob_def:
+                    encounter_chance = mob_def.get("encounter_chance", 1)
+                    weighted_pool.append((mob_id, mob_def, encounter_chance))
+            
+            if weighted_pool:
+                # Select mob based on weights
+                total_weight = sum(w[2] for w in weighted_pool)
+                rand = random.random() * total_weight
+                cumulative = 0
+                for mob_id, mob_def, weight in weighted_pool:
+                    cumulative += weight
+                    if rand <= cumulative:
+                        # Return mob with its name and desc text keys
+                        mob_name_text_key = f"{mob_id}_name"
+                        mob_desc_text_key = f"{mob_id}_desc"
+                        
+                        mob_tactics = mob_def.get("tactics", {})
+                        return (
+                            {
+                                "id": mob_id,
+                                "name": mob_def.get("display_name", mob_id),
+                                "hp": mob_def.get("hp", 30),
+                                "max_hp": mob_def.get("hp", 30),
+                                "attack": mob_def.get("attack", 5),
+                                "defense": mob_def.get("defense", 1),
+                                "speed": mob_def.get("speed", 3),
+                                "crit_chance": mob_def.get("crit_chance", 0.0),
+                                "dmg": mob_def.get("attack", 5),  # dmg from attack
+                                "level": mob_def.get("min_level", 1),
+                                "tactics": mob_tactics,
+                                "special_ability": mob_def.get("special_ability"),
+                                "debuff_chance": mob_tactics.get("debuff_chance", 0),
+                                "overpower": mob_tactics.get("overpower", False),
+                                "has_suck_ability": mob_id == "head_on_spider_legs",  # special for head mob
+                                "turns_to_kill": mob_def.get("turns_to_kill", 3),  # for head_on_spider_legs
+                            },
+                            mob_desc_text_key
+                        )
+    
+    # Fallback to generic mob generation if no specific mobs
+    mob_types = mobs_data.get("mob_types", {})
+    encounter_weights = mobs_data.get("encounter_weights", {})
+    
+    # Select rarity based on weights
+    rand = random.random()
+    rarity = "common"
+    cumulative = 0
+    for r, weight in encounter_weights.items():
+        cumulative += weight
+        if rand < cumulative:
+            rarity = r
+            break
+    
+    rarity_data = mob_types.get(rarity, {}).get("stats", {})
+    if not rarity_data:
+        return None, None
+    
+    # Generate random mob
+    names = mob_types.get(rarity, {}).get("names", {}).get(loc_id, [f"{rarity.capitalize()} Mob"])
+    name = random.choice(names)
+    
+    return (
+        {
             "name": name,
             "hp": random.randint(rarity_data.get("hp", {}).get("min", 20), rarity_data.get("hp", {}).get("max", 50)),
             "attack": random.randint(rarity_data.get("attack", {}).get("min", 5), rarity_data.get("attack", {}).get("max", 10)),
@@ -309,31 +363,13 @@ def _select_encounter_mob(loc_id: str, mobs_data: dict[str, Any]) -> dict[str, A
             "dmg": random.randint(rarity_data.get("attack", {}).get("min", 5), rarity_data.get("attack", {}).get("max", 10)),
             "level": 1,
             "tactics": {},
-        }
-    
-    # Build weighted pool from specific mobs
-    weighted_pool = []
-    for mob in specific_mobs:
-        weight = mob.get("encounter_chance", 1)
-        mob_weighted_entry = {
-            "name": mob.get("name", "Unknown Mob"),
-            "hp": mob.get("hp", 30),
-            "attack": mob.get("attack", 5),
-            "defense": mob.get("defense", 1),
-            "speed": mob.get("speed", 3),
-            "crit_chance": mob.get("crit_chance", 0.0),
-            "dmg": mob.get("attack", 5),  # dmg from attack
-            "level": mob.get("min_level", 1),
-            "tactics": mob.get("tactics", {}),
-            "special_ability": mob.get("special_ability"),
-        }
-        for _ in range(int(weight * 100)):  # Scale up for better randomness
-            weighted_pool.append(mob_weighted_entry)
-    
-    if not weighted_pool:
-        return None
-    
-    return random.choice(weighted_pool)
+            "debuff_chance": 0,
+            "overpower": False,
+            "has_suck_ability": False,
+            "turns_to_kill": 3,
+        },
+        None
+    )
 
 
 def _format_resource(resource: dict[str, Any]) -> str:
@@ -445,10 +481,20 @@ async def adventure_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             return
 
+        # Get boss chance from first boss in boss_list
+        boss_chance = "0"
+        boss_list = loc.get("boss_list", [])
+        if boss_list:
+            first_boss_id = boss_list[0].get("boss_id", "")
+            boss_chance = str(boss_list[0].get("chance", 5))
+        
         loc_text = _get_text(
-            "adventure.location_info",
+            "adventure.location_detailed_info",
+            username=user.username or user.first_name,
             name=loc.get("name", loc_id),
-            desc=loc.get("description", ""),
+            level=loc.get("required_level", 1),
+            duration=loc.get("duration", 300) // 60,
+            boss_chance=boss_chance,
         )
         await query.edit_message_text(
             loc_text,
@@ -566,7 +612,7 @@ async def _expedition_complete_callback(context: ContextTypes.DEFAULT_TYPE) -> N
     hp_healed = 0
     
     if has_encounter:
-        mob = _select_encounter_mob(loc_id, mobs_data)
+        mob, mob_desc_key = _select_encounter_mob(loc_id, mobs_data, locations)
         if mob:
             # Start fight
             fight_result = _resolve_encounter_fight(current_hp, max_hp, mob)

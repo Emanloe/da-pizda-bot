@@ -2,12 +2,17 @@ welcome: |
   🗺️ <b>Доступные локации</b>
   Выберите, куда отправитесь:
 
-location_info: |
-  📍 <b>{name}</b>
-  {desc}
-
-back: "◀️ Назад"
-fight: "⚔️ В бой!"
+# Detailed location info (shown when clicking a location)
+location_detailed_info: |
+  {username} стоит на входе в {name}
+  
+  {description}
+  
+  Уровень: {level}+
+  Время: {duration} мин
+  Награды: 🌿 Ресурсы, 🥚 Яйца питомцев
+  Босс: {boss_chance}%
+  
 cancel: "❌ Отмена"
 cancelled: "Отменено."
 unknown: "Неизвестная команда. Попробуйте снова."

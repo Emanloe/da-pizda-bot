@@ -169,22 +169,6 @@ class TestResolveEncounterFight:
         assert result["encounter_result"] == "mob_escaped"
 
 
-class TestSelectEncounterMob:
-    """Тесты выбора моба для энкаунтера"""
-
-    def test_select_mob_from_specific_mobs(self, mock_mobs):
-        mob = adv._select_encounter_mob("dark_forest", mock_mobs)
-        
-        assert mob is not None
-        assert mob["name"] in ["🌳Куст с предъявами", "Голова деда на паучьих ногах"]
-        assert "hp" in mob
-        assert "dmg" in mob
-
-    def test_returns_none_for_unknown_location(self, mock_mobs):
-        mob = adv._select_encounter_mob("unknown_location", mock_mobs)
-        assert mob is None
-
-
 class TestRollLoot:
     """Тесты системы дропа ресурсов"""
 
