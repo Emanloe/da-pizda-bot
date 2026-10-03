@@ -28,7 +28,9 @@ from config import (
     GAME_MINUTE,
     DUEL_TIMEZONE,
     DUEL_ITEM_EVENT_CHECK_MINUTES,
+    HUECRAB_CHECK_MINUTES,
 )
+
 from database import (
     init_db,
     set_boss_enabled,
@@ -100,10 +102,12 @@ from handlers.adventure import (
     adventure_callback,
 )
 from handlers.huecrab import (
-    HUECRAB_CHECK_MINUTES,
-    huecrab_autoloot_job,
     huecrab_event_job,
+    huecrab_autoloot_job,
     huecrab_tame_callback,
+)
+from handlers.adventure_expiration_checker import (
+    expedition_expiration_job,
 )
 
 

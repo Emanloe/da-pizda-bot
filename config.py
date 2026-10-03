@@ -67,5 +67,6 @@ HUECRAB_TAME_CHANCE = 0.50
 HUECRAB_AUTOLOOT_DELAY_SECONDS = 20
 DIG_FIND_CHANCE = 0.20
 DUEL_ITEM_EVENT_CHECK_MINUTES = 60
+HUECRAB_CHECK_MINUTES = 60  # почасовая проверка Huecrab событий
 DUEL_WIN_CHANCE = 0.50    # 50%
 TOP_SORT_BY = "wins"      # "wins" | "net_wins" | "points"
