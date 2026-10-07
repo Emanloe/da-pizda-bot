@@ -1,8 +1,16 @@
 button: Элитный мячик знание
 waiting: "Шар ожидает вопрос:"
-inline_message: |-
+inline_description: "Вопрос: {question}"
+inline_preview: |-
   Элитный мячик знание
-  Чтобы активировать шар здесь, отправь /ball в этот чат.
+  Вопрос: {question}
+inline_button: Получить ответ
+inline_not_owner: Это не твой мячик.
+inline_unavailable: Эта карточка мячика больше недоступна.
+inline_final: |-
+  Элитный мячик знание
+  Вопрос: {question}
+  Ответ: {answer}
 answers:
   - Да
   - Нет

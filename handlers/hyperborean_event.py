@@ -11,6 +11,8 @@ from telegram.ext import ContextTypes
 
 from database import format_user_title, get_all_chats, get_or_create_duel_user
 from text_resources import get_text
+from module_settings import is_module_enabled
+from handlers.moss_choice_event import spawn_moss_choice_event
 
 HYPERBOREAN_HUY_CHANCE = 0.05
 HYPERBOREAN_HUY_CHECK_MINUTES = 60
@@ -39,6 +41,9 @@ async def _spawn_hyperboreic_huy(
     if chat_id in ACTIVE_HYPERBOREAN_EVENTS:
         return
 
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        return
+
     today = _current_date()
     last_spawn_date, daily_count = HYPERBOREAN_HUY_DAILY_SPAWNS.get(
         chat_id,
@@ -50,6 +55,9 @@ async def _spawn_hyperboreic_huy(
         return
 
     if random.random() >= HYPERBOREAN_HUY_CHANCE:
+        return
+
+    if not is_module_enabled(chat_id, "duel_random_events"):
         return
 
     event_type = random.choice(
@@ -76,6 +84,9 @@ async def _spawn_hyperboreic_huy(
             ]
         ]
     )
+
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        return
 
     try:
         message = await context.bot.send_message(
@@ -134,6 +145,10 @@ async def hyperboreic_huy_daily_job(
                 "для чата %s",
                 chat_id,
             )
+        try:
+            await spawn_moss_choice_event(context, chat_id, _current_date().isoformat())
+        except Exception:
+            logging.exception("Moss choice check failed in chat %s", chat_id)
 
 
 def _claim_hyperboreic_huy(
@@ -150,6 +165,9 @@ def _claim_hyperboreic_huy(
         "error" — ошибка БД.
     """
 
+    from database import is_deleted_user
+    if is_deleted_user(tg_user.id):
+        return "missing"
     user = get_or_create_duel_user(
         tg_user,
         chat_id,
@@ -166,6 +184,9 @@ def _claim_hyperboreic_huy(
             str(db_path),
             timeout=10,
         ) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT 1 FROM deleted_users WHERE user_id = ?", (user_id,)).fetchone():
+                return "missing"
             cursor = conn.execute(
                 """
                 SELECT
@@ -235,16 +256,23 @@ def _claim_hyperboreic_huy_for_other(
 ):
     """Resolve the "two for another" action for one user of this chat."""
     try:
+        from database import is_deleted_user
+        if is_deleted_user(tg_user.id):
+            return "missing", None, False
         # This preserves the existing claim behaviour: the player pressing a
         # button is registered before an event can be resolved.
         get_or_create_duel_user(tg_user, chat_id)
 
         with sqlite3.connect(str(_HYPERBOREAN_DB_PATH), timeout=10) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT 1 FROM deleted_users WHERE user_id = ?", (tg_user.id,)).fetchone():
+                return "missing", None, False
             candidates = conn.execute(
                 """
                 SELECT user_id, username, display_name, points, dick_stolen_today, dwarf_name
                 FROM duel_users
-                WHERE chat_id = ?
+                WHERE chat_id = ? AND NOT EXISTS
+                    (SELECT 1 FROM deleted_users AS d WHERE d.user_id = duel_users.user_id)
                 """,
                 (chat_id,),
             ).fetchall()
@@ -269,12 +297,11 @@ def _claim_hyperboreic_huy_for_other(
                 conn.execute(
                     """
                     UPDATE duel_users
-                    SET points = 0, dick_stolen_today = 1
+                    SET dick_stolen_today = 1
                     WHERE chat_id = ? AND user_id = ?
                     """,
                     (chat_id, user_id),
                 )
-                selected_user["points"] = 0
                 return "exploded", selected_user, True
 
             return "unchanged", selected_user, False
@@ -300,6 +327,10 @@ async def hyperboreic_huy_callback(
         return
 
     chat_id = update.effective_chat.id
+    from database import is_deleted_user
+    if is_deleted_user(query.from_user.id):
+        await query.answer(get_text("gnome_deletion.deleted"), show_alert=True)
+        return
     event = ACTIVE_HYPERBOREAN_EVENTS.get(chat_id)
 
     if not event:
@@ -364,9 +395,17 @@ async def hyperboreic_huy_callback(
 
         if result == "exploded":
             if event_type == "arthur":
-                text = get_text("hyperborean.other.exploded.arthur", title=title)
+                text = get_text(
+                    "hyperborean.other.exploded.arthur",
+                    title=title,
+                    points=selected_user["points"],
+                )
             else:
-                text = get_text("hyperborean.other.exploded.hyperboreic", title=title)
+                text = get_text(
+                    "hyperborean.other.exploded.hyperboreic",
+                    title=title,
+                    points=selected_user["points"],
+                )
             await query.answer(get_text("hyperborean.other.answer.exploded"))
         else:
             if event_type == "arthur":

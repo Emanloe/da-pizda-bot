@@ -121,6 +121,44 @@ def relevant_snapshot(battle):
 
 
 @pytest.mark.asyncio
+async def test_boss_join_rechecks_deleted_user_after_waiting_for_battle_lock(
+    temp_database, monkeypatch, fake_context,
+):
+    import database
+    from handlers import boss_service, duel
+
+    chat_id = -713
+    battle = make_battle([make_participant(2)], phase="join", round_num=0)
+    duel.ACTIVE_BOSS_BATTLES[chat_id] = battle
+    update, query = make_callback_update(chat_id, 1, "boss_join")
+    initial_check_done = asyncio.Event()
+    real_check = boss_service.is_deleted_user
+    checks = 0
+
+    def observed_check(user_id):
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            initial_check_done.set()
+        return real_check(user_id)
+
+    monkeypatch.setattr(boss_service, "is_deleted_user", observed_check)
+    async with battle["lock"]:
+        join = asyncio.create_task(duel.boss_callback(update, fake_context))
+        await asyncio.wait_for(initial_check_done.wait(), 1)
+        assert not join.done()
+        assert database.delete_gnome(1, "user1")
+    await asyncio.wait_for(join, 1)
+
+    assert checks == 2
+    assert set(battle["participants"]) == {2}
+    assert database.get_duel_user_by_id(chat_id, 1) is None
+    query.answer.assert_awaited_once()
+    fake_context.bot.edit_message_text.assert_not_awaited()
+    duel.ACTIVE_BOSS_BATTLES.clear()
+
+
+@pytest.mark.asyncio
 async def test_boss_join_callback_inserts_current_participant_snapshot(
     monkeypatch, fake_context
 ):
@@ -315,9 +353,10 @@ async def test_boss_callback_reports_exact_action_acknowledgements(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def clear_active_boss_battles():
-    from handlers import duel
+def clear_active_boss_battles(tmp_path, monkeypatch, temp_database):
+    from handlers import boss_registration, duel
 
+    monkeypatch.setattr(boss_registration, "_BOSS_REG_DB_PATH", tmp_path / "registrations.db")
     duel.ACTIVE_BOSS_BATTLES.clear()
     yield
     duel.ACTIVE_BOSS_BATTLES.clear()
@@ -334,9 +373,9 @@ async def test_start_boss_battle_creates_complete_join_state(
     boss = {"name": "Выбранный Босс", "emoji": "💀", "description": "desc"}
     choose = Mock(return_value=boss)
     tasks = TaskRecorder()
-    registrations = Mock(side_effect=AssertionError("registrations were read"))
+    registrations = Mock(return_value=[])
     monkeypatch.setattr(duel.random, "choice", choose)
-    monkeypatch.setattr(duel, "_boss_get_registered_users", registrations)
+    monkeypatch.setattr(duel, "_boss_consume_registrations", registrations)
     monkeypatch.setattr(duel.asyncio, "create_task", tasks)
 
     started = await duel._start_boss_battle(
@@ -360,7 +399,7 @@ async def test_start_boss_battle_creates_complete_join_state(
     assert tasks.tasks[0].coroutine_name == "_boss_join_timer"
     assert tasks.tasks[0].coroutine_locals["chat_id"] == chat_id
     choose.assert_called_once_with(duel.BOSSES)
-    registrations.assert_not_called()
+    registrations.assert_called_once_with(chat_id)
     send_kwargs = fake_context.bot.send_message.await_args.kwargs
     assert send_kwargs["text"] == (
         "💀 <b>Выбранный Босс</b>\n\n"
@@ -417,7 +456,7 @@ async def test_start_boss_battle_preserves_pre_registered_join_presentation(
     boss = {"name": "Выбранный Босс", "emoji": "💀", "description": "desc"}
     tasks = TaskRecorder()
     monkeypatch.setattr(duel.random, "choice", Mock(return_value=boss))
-    monkeypatch.setattr(duel, "_boss_get_registered_users", Mock(return_value=[(1,)]))
+    monkeypatch.setattr(duel, "_boss_consume_registrations", Mock(return_value=[(1,)]))
     monkeypatch.setattr(
         duel,
         "_boss_tg_user_from_registration",
@@ -480,6 +519,7 @@ async def test_boss_join_timeout_removes_empty_battle_and_edits_message(
             "Босс постоял, посмотрел на этот позор и ушёл."
         ),
         parse_mode="HTML",
+        reply_markup=duel._boss_next_registration_keyboard(),
     )
 
 
@@ -506,21 +546,19 @@ async def test_boss_auto_choice_timeout_presentation_is_exact(
     monkeypatch.setattr(duel, "_boss_auto_zone", auto_zone)
     monkeypatch.setattr(duel, "schedule_auto_delete", Mock())
 
+    battle = {}
     await duel._boss_auto_choose_for_zazevasha(
         fake_context,
         -719,
-        {},
+        battle,
         participant,
         phase,
     )
 
     assert participant[field] == zone
     auto_zone.assert_called_once_with()
-    fake_context.bot.send_message.assert_awaited_once_with(
-        chat_id=-719,
-        text=expected,
-        parse_mode="HTML",
-    )
+    assert battle["battle_log_lines"] == [expected]
+    fake_context.bot.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -724,7 +762,9 @@ async def test_boss_attack_phase_timer_auto_chooses_only_missing_alive_players(
     assert tasks.tasks[0].coroutine_name == "_boss_phase_timer"
     assert tasks.tasks[0].coroutine_locals["round_num"] == 2
     assert tasks.tasks[0].coroutine_locals["phase"] == "block"
-    assert fake_context.bot.send_message.await_count == 2
+    fake_context.bot.send_message.assert_awaited_once()
+    text = fake_context.bot.send_message.await_args.kwargs["text"]
+    assert "user2" in text and "user4" in text
 
 
 @pytest.mark.asyncio
@@ -981,7 +1021,7 @@ async def test_lethal_hit_skips_boss_block_fallback_rng_and_reports_real_survivo
 
     report = duel._boss_final_report(battle, victory=True)
     assert "Отряд: <b>2</b> — выжило <b>1</b>, погибло <b>1</b>." in report
-    round_text = fake_context.bot.edit_message_text.await_args.kwargs["text"]
+    round_text = fake_context.bot.send_message.await_args.kwargs["text"]
     assert "Босс пал до ответного удара" in round_text
     assert "Босс атаковал" not in round_text
 
@@ -1024,6 +1064,42 @@ async def test_nonlethal_round_preserves_attack_then_block_fallback_rng_order(
 
 
 @pytest.mark.asyncio
+async def test_final_hit_round_accounting_keeps_fallback_rng_trace(
+    monkeypatch, fake_context,
+):
+    from handlers import duel
+
+    chat_id = -723
+    before_finisher = make_participant(1, attack=None, block=None)
+    finisher = make_participant(2, attack="head", block=None)
+    after_finisher = make_participant(3, attack=None, block=None)
+    battle = make_battle(
+        [before_finisher, finisher, after_finisher], phase="block",
+        hits=3, boss_attack="head", boss_block="body",
+    )
+    duel.ACTIVE_BOSS_BATTLES[chat_id] = battle
+    auto_zone = Mock(side_effect=["head", "head"])
+    finish_victory = AsyncMock()
+    monkeypatch.setattr(duel, "_boss_auto_zone", auto_zone)
+    monkeypatch.setattr(duel, "_boss_finish_victory", finish_victory)
+    monkeypatch.setattr(duel.asyncio, "sleep", AsyncMock())
+
+    await duel._boss_resolve_round(fake_context, chat_id)
+
+    assert auto_zone.call_args_list == [call(), call()]
+    assert battle["hits"] == 5
+    assert [p["rounds_survived"] for p in
+            (before_finisher, finisher, after_finisher)] == [1, 1, 1]
+    assert [(p["hits"], p["misses"], p["blocks"]) for p in
+            (before_finisher, finisher, after_finisher)] == [
+        (1, 0, 1), (1, 0, 0), (0, 0, 0),
+    ]
+    assert after_finisher["attack"] is None
+    assert after_finisher["block"] is None
+    finish_victory.assert_awaited_once_with(fake_context, chat_id)
+
+
+@pytest.mark.asyncio
 async def test_boss_round_resolution_presentation_is_exact(monkeypatch, fake_context):
     from handlers import duel
 
@@ -1041,9 +1117,8 @@ async def test_boss_round_resolution_presentation_is_exact(monkeypatch, fake_con
 
     await duel._boss_resolve_round(fake_context, chat_id)
 
-    fake_context.bot.edit_message_text.assert_awaited_once_with(
+    fake_context.bot.send_message.assert_awaited_once_with(
         chat_id=chat_id,
-        message_id=battle["message_id"],
         text=(
             "💥 <b>РАУНД 6 — РЕЗУЛЬТАТ</b>\n\n"
             "👹 Босс атаковал: <b>Голова</b>\n"
@@ -1056,6 +1131,142 @@ async def test_boss_round_resolution_presentation_is_exact(monkeypatch, fake_con
         ),
         parse_mode="HTML",
     )
+
+
+@pytest.mark.asyncio
+async def test_four_parallel_boss_round_logs_and_deletions_stay_in_their_chats(
+    monkeypatch, fake_context,
+):
+    from handlers import duel
+
+    chats = (-801, -802, -803, -804)
+    for index, chat_id in enumerate(chats):
+        player = make_participant(index + 1, attack="head", block=None)
+        battle = make_battle([player], phase="block", hits=4, message_id=700 + index)
+        battle["battle_id"] = f"battle-{index}"
+        battle["battle_log_lines"] = [f"auto-{index}"]
+        duel.ACTIVE_BOSS_BATTLES[chat_id] = battle
+
+    finish = AsyncMock()
+    monkeypatch.setattr(duel, "_boss_finish_victory", finish)
+    monkeypatch.setattr(duel.asyncio, "sleep", AsyncMock())
+    await asyncio.gather(*(duel._boss_resolve_round(fake_context, chat) for chat in chats))
+
+    assert fake_context.bot.send_message.await_count == 4
+    sent = {entry.kwargs["chat_id"]: entry.kwargs["text"]
+            for entry in fake_context.bot.send_message.await_args_list}
+    assert set(sent) == set(chats)
+    for index, chat_id in enumerate(chats):
+        assert f"auto-{index}" in sent[chat_id]
+        assert "Босс пал" in sent[chat_id]
+        assert duel.ACTIVE_BOSS_BATTLES[chat_id]["battle_log_message_id"] == 101
+
+    scheduled = fake_context.job_queue.calls
+    assert len(scheduled) == 4
+    assert {entry[2]["data"]["chat_id"] for entry in scheduled} == set(chats)
+    for callback, delay, kwargs in scheduled:
+        data = kwargs["data"]
+        assert callback is duel.delete_messages_job
+        assert delay == duel.BOSS_LOG_DELETE_DELAY == 60
+        assert data["battle_id"] == f"battle-{chats.index(data['chat_id'])}"
+        assert data["message_ids"] == [101]
+        fake_context.job.data = data
+        await callback(fake_context)
+    assert fake_context.bot.delete_message.await_count == 4
+    assert {tuple(entry.kwargs.values()) for entry in
+            fake_context.bot.delete_message.await_args_list} == {
+                (chat, 101) for chat in chats
+            }
+    assert finish.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_boss_round_log_edits_one_message_and_truncates_long_html(fake_context):
+    from handlers import duel
+
+    battle = make_battle([], round_num=3)
+    battle["battle_id"] = "one-battle"
+    first = await duel._boss_publish_round_log(fake_context, -810, battle, "<b>first</b>")
+    second = await duel._boss_publish_round_log(fake_context, -810, battle, "<b>second</b>")
+    again = await duel._boss_publish_round_log(fake_context, -810, battle, "<b>second</b>")
+    assert first == second == again == 101
+    fake_context.bot.send_message.assert_awaited_once()
+    fake_context.bot.edit_message_text.assert_awaited_once_with(
+        chat_id=-810, message_id=101, text="<b>second</b>", parse_mode="HTML",
+    )
+    fitted = duel._boss_fit_log("<b>" + "&" * 6000 + "</b>")
+    assert len(fitted) <= 4000
+    assert fitted.endswith("Журнал раунда сокращён.")
+    emoji_log = duel._boss_fit_log("😀" * 3000)
+    assert len(emoji_log.encode("utf-16-le")) // 2 <= 4000
+
+
+@pytest.mark.asyncio
+async def test_started_boss_round_creates_log_then_edits_same_message_on_result(
+    monkeypatch, fake_context,
+):
+    from handlers import duel
+    from text_resources import get_text
+
+    chat_id = -812
+    player = make_participant(1)
+    battle = make_battle([player], phase="join", round_num=0, hits=4)
+    battle["battle_id"] = "battle-log"
+    duel.ACTIVE_BOSS_BATTLES[chat_id] = battle
+    monkeypatch.setattr(duel.random, "choice", Mock(side_effect=["head", "body"]))
+    monkeypatch.setattr(duel.asyncio, "create_task", TaskRecorder())
+    monkeypatch.setattr(duel.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(duel, "_boss_finish_victory", AsyncMock())
+
+    await duel._boss_start_round(fake_context, chat_id)
+    fake_context.bot.send_message.assert_awaited_once_with(
+        chat_id=chat_id, text=get_text("boss.round.log_heading", round=1),
+        parse_mode="HTML",
+    )
+    assert battle["battle_log_message_id"] == 101
+    player["attack"] = "head"
+    battle["phase"] = "block"
+    await duel._boss_resolve_round(fake_context, chat_id)
+    assert fake_context.bot.send_message.await_count == 1
+    assert fake_context.bot.edit_message_text.await_args.kwargs["message_id"] == 101
+    assert "Босс пал" in fake_context.bot.edit_message_text.await_args.kwargs["text"]
+    assert fake_context.job_queue.calls[0][2]["data"]["battle_id"] == "battle-log"
+
+
+@pytest.mark.asyncio
+async def test_old_battle_timer_cannot_advance_replacement_in_same_chat(
+    monkeypatch, fake_context,
+):
+    from handlers import duel
+
+    chat_id = -811
+    battle = make_battle([make_participant(1)], phase="attack", phase_task=FakeTask())
+    battle["battle_id"] = "new-battle"
+    duel.ACTIVE_BOSS_BATTLES[chat_id] = battle
+    monkeypatch.setattr(duel.asyncio, "sleep", AsyncMock())
+    await duel._boss_phase_timer(fake_context, chat_id, 1, "attack", "old-battle")
+    await duel._boss_join_timer(fake_context, chat_id, "old-battle")
+    assert battle["phase"] == "attack"
+    fake_context.bot.send_message.assert_not_awaited()
+    fake_context.bot.edit_message_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_old_boss_message_callback_cannot_act_in_replacement_battle(fake_context):
+    from handlers import duel
+
+    chat_id = -813
+    player = make_participant(1)
+    battle = make_battle([player], phase="attack", message_id=900)
+    battle["battle_id"] = "new-battle"
+    duel.ACTIVE_BOSS_BATTLES[chat_id] = battle
+    update, query = make_callback_update(chat_id, 1, "boss_attack_head_1")
+    query.message = SimpleNamespace(message_id=800)
+
+    await duel.boss_callback(update, fake_context)
+    assert player["attack"] is None
+    fake_context.bot.edit_message_text.assert_not_awaited()
+    query.answer.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -58,7 +58,7 @@ def callback_update(data, user, message=None):
 
 
 @pytest.fixture(autouse=True)
-def clean_active_duels():
+def clean_active_duels(temp_database):
     from handlers import duel
 
     duel.ACTIVE_DUELS.clear()
@@ -82,6 +82,7 @@ async def test_selected_duel_runs_callbacks_through_round_change_to_result(
 ):
     import database
     from handlers import duel
+    monkeypatch.setattr(duel, "_process_persistent_duel_fight", duel._process_duel_fight)
 
     attacker_tg = make_user(1, "attacker")
     defender_tg = make_user(2, "defender")
@@ -257,6 +258,7 @@ async def test_completed_duel_callback_sends_prefixed_post_message_last(
 ):
     import database
     from handlers import duel, duel_text
+    monkeypatch.setattr(duel, "_process_persistent_duel_fight", duel._process_duel_fight)
     from text_resources import get_text_list
 
     attacker_tg = make_user(3, "post_attacker")
@@ -719,6 +721,45 @@ def make_block_phase_duel(*, strike_zone="head", round_num=3, turn_id=8):
         "lock": asyncio.Lock(),
         "original_msg_id": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_process_block_choice_miss_preserves_rng_trace(monkeypatch, fake_context):
+    from handlers import duel
+
+    state = make_block_phase_duel()
+    duel.ACTIVE_DUELS[CHAT_ID] = state
+    install_fake_tasks(monkeypatch, duel)
+    finish = AsyncMock()
+    rolls = iter((0.5, 0.0))
+    trace = []
+
+    def roll():
+        value = next(rolls)
+        trace.append(("random", value))
+        return value
+
+    def choose(values):
+        if values is duel.MISS_PHRASES:
+            trace.append(("choice", "miss"))
+            return values[0]
+        assert values is duel.ATTACK_PHRASES
+        trace.append(("choice", "attack"))
+        return values[0]
+
+    monkeypatch.setattr(duel, "_finish_duel", finish)
+    monkeypatch.setattr(duel, "random", SimpleNamespace(random=roll, choice=choose))
+
+    await duel._process_block_choice(fake_context, CHAT_ID, "body")
+
+    assert trace == [
+        ("random", 0.5), ("random", 0.0),
+        ("choice", "miss"), ("choice", "attack"),
+    ]
+    assert (state["phase"], state["attack_zone"], state["round"], state["turn_id"]) == (
+        "attack", None, 4, 9,
+    )
+    finish.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1212,13 +1253,17 @@ async def test_duel_stats_command_preserves_yaml_backed_output(monkeypatch, fake
         "get_or_create_duel_user",
         Mock(return_value=user_data),
     )
-    monkeypatch.setattr(duel, "format_user_title", lambda _user: "&lt;b&gt;Статист&lt;/b&gt;")
-    monkeypatch.setattr(duel, "get_bosses_defeated", lambda **_kwargs: 4)
-    monkeypatch.setattr(duel, "get_win_title", lambda _count: "🍆 Победитель")
-    monkeypatch.setattr(duel, "get_loss_title", lambda _count: "💀 Лузер")
-    monkeypatch.setattr(duel, "get_stolen_dicks_title", lambda _count: "🔪 Вор")
-    monkeypatch.setattr(duel, "get_duel_inventory", lambda *_args: [])
-    monkeypatch.setattr(duel, "has_huecrab", lambda *_args: False)
+    model = {
+        "telegram_title": "&lt;b&gt;Статист&lt;/b&gt;", "telegram_inventory": "Промасленная жилетка, Нож",
+        "points": 37, "max_points": 100, "wins": 12, "losses": 8,
+        "titles": {
+            "wins": {"text": "🍆 Победитель", "count": 12},
+            "losses": {"text": "💀 Лузер", "count": 8},
+            "stolen_dicks": {"text": "🔪 Вор", "count": 3},
+        },
+        "boss_wins": 4, "dick_status": {"text": "С хуем 🍆"}, "pet": None,
+    }
+    monkeypatch.setattr(duel, "player_stats_read_model", lambda *_args: model)
 
     await duel.duel_stats_command(update, fake_context)
 
@@ -1236,10 +1281,9 @@ async def test_duel_stats_command_preserves_yaml_backed_output(monkeypatch, fake
     )
 
     sent.reset_mock()
-    user_data["dick_stolen_today"] = True
-    monkeypatch.setattr(duel, "get_win_title", lambda _count: None)
-    monkeypatch.setattr(duel, "get_loss_title", lambda _count: None)
-    monkeypatch.setattr(duel, "get_stolen_dicks_title", lambda _count: None)
+    model["dick_status"]["text"] = "Без хуя 💀"
+    for category in model["titles"].values():
+        category["text"] = None
 
     await duel.duel_stats_command(update, fake_context)
 
@@ -1353,7 +1397,8 @@ async def test_duel_selection_ui_preserves_text_labels_and_callback_data(
     monkeypatch,
     fake_context,
 ):
-    from handlers import duel
+    from handlers import duel, duel_service
+    from text_resources import get_text
 
     initiator_tg = make_user(701, "initiator")
     update = SimpleNamespace(
@@ -1374,14 +1419,19 @@ async def test_duel_selection_ui_preserves_text_labels_and_callback_data(
     )
     monkeypatch.setattr(duel, "_extract_username", lambda *_args: None)
     monkeypatch.setattr(
-        duel,
+        duel_service,
         "get_duel_top",
         Mock(return_value=[("initiator", "Initiator", 0, 0, 20), ("opponent", "@Оппонент", 0, 0, 20)]),
     )
     monkeypatch.setattr(
-        duel,
+        duel_service,
         "get_duel_user_by_username",
         lambda username, _chat_id: admission_user(702, username, points=0),
+    )
+    monkeypatch.setattr(
+        duel_service,
+        "get_duel_user_by_id",
+        lambda _chat_id, _user_id: admission_user(initiator_tg.id, initiator_tg.username, points=0),
     )
 
     await duel.duel_command(update, fake_context)
@@ -1396,12 +1446,12 @@ async def test_duel_selection_ui_preserves_text_labels_and_callback_data(
     ]
 
     sent.reset_mock()
-    monkeypatch.setattr(duel, "get_duel_top", Mock(return_value=[]))
+    monkeypatch.setattr(duel_service, "get_duel_top", Mock(return_value=[]))
     await duel.duel_command(update, fake_context)
     sent.assert_awaited_once_with(
         update,
         fake_context,
-        "❌ В чате нет доступных соперников для дуэли.",
+        get_text("duel.selection.no_opponents"),
     )
 
 

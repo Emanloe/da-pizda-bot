@@ -14,6 +14,7 @@ from database import (
     moscow_month_key,
 )
 from text_resources import get_text
+from module_settings import is_module_enabled
 
 
 def previous_moscow_month_key(when: datetime | None = None) -> str:
@@ -48,9 +49,14 @@ async def monthly_summary_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for chat_id in chat_ids:
         try:
+            if not is_module_enabled(chat_id, "monthly_summary"):
+                continue
+            text = format_monthly_summary(chat_id, month)
+            if not is_module_enabled(chat_id, "monthly_summary"):
+                continue
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=format_monthly_summary(chat_id, month),
+                text=text,
             )
         except Exception:
             logging.exception("Не удалось отправить месячную сводку в чат %s", chat_id)

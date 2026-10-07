@@ -11,6 +11,7 @@ import pytz
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, JobQueue
 from text_resources import get_text
+from module_settings import is_module_enabled
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -216,10 +217,14 @@ def schedule_past_pizda_job(job_queue: JobQueue):
 
 
 async def run_past_pizda_in_chat(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    if not is_module_enabled(chat_id, "past_pizda"):
+        return
     before_ts = _start_of_today_ts()
     limit = random.randint(1, 5)
     message_ids = pick_pizda_candidates(chat_id, before_ts, limit)
     for message_id in message_ids:
+        if not is_module_enabled(chat_id, "past_pizda"):
+            return
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -236,6 +241,8 @@ async def past_pizda_job(context: ContextTypes.DEFAULT_TYPE):
     before_ts = _start_of_today_ts()
     chats = get_pizda_candidate_chats(before_ts)
     for (chat_id,) in chats:
+        if not is_module_enabled(chat_id, "past_pizda"):
+            continue
         await run_past_pizda_in_chat(context, chat_id)
 
     set_bot_meta(LAST_RUN_KEY, _now_moscow().isoformat())

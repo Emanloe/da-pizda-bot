@@ -1,4 +1,7 @@
 import copy
+import itertools
+
+import pytest
 
 
 def make_round_participant(
@@ -489,6 +492,77 @@ def test_lethal_hit_prevents_boss_response_and_preserves_victory_survivor_invari
     ]
 
 
+@pytest.mark.parametrize("order", [
+    (1, 2, 3, 4, 5, 6, 7),
+    (5, 4, 3, 2, 1, 6, 7),
+])
+def test_final_round_counts_every_survivor_once_regardless_of_order(order):
+    from handlers.boss_state import _apply_boss_round_result
+
+    players = {
+        1: make_round_participant(attack="body", block="dick"),
+        2: make_round_participant(attack="body", block="dick"),
+        3: make_round_participant(attack="body", block="head"),
+        4: make_round_participant(attack="body", block="dick"),
+        5: make_round_participant(attack="body", block="dick"),
+        6: make_round_participant(attack="head", block=None),
+        7: make_round_participant(attack=None, block=None),
+    }
+    battle = make_round_battle({user_id: players[user_id] for user_id in order},
+                               hits=4, round_num=1)
+
+    result = _apply_boss_round_result(battle, required_hits=5)
+
+    assert result["outcome"] == "victory"
+    assert battle["hits"] == 5
+    assert {user_id: player["rounds_survived"] for user_id, player in players.items()} == {
+        1: 0, 2: 0, 3: 1, 4: 0, 5: 0, 6: 1, 7: 1,
+    }
+    assert players[7]["hits"] == players[7]["misses"] == players[7]["blocks"] == 0
+    assert all(players[user_id]["death_round"] == 1 for user_id in (1, 2, 4, 5))
+    assert players[6]["hits"] == 1
+    assert players[6]["blocks"] == 0
+
+
+def test_survived_rounds_exclude_death_round_and_previously_dead_players():
+    from handlers.boss_state import _apply_boss_round_result
+
+    player = make_round_participant(attack="body", block="head")
+    already_dead = make_round_participant(alive=False, rounds_survived=1)
+    battle = make_round_battle({1: player, 2: already_dead}, round_num=1)
+    for round_num in (1, 2):
+        battle["round"] = round_num
+        _apply_boss_round_result(battle, required_hits=5)
+        assert player["rounds_survived"] == round_num
+    battle["round"] = 3
+    player["block"] = "dick"
+    _apply_boss_round_result(battle, required_hits=5)
+
+    assert player["alive"] is False
+    assert player["death_round"] == 3
+    assert player["rounds_survived"] == 2
+    assert already_dead["rounds_survived"] == 1
+
+
+@pytest.mark.parametrize("order", list(itertools.permutations((1, 2, 3))))
+def test_survived_round_count_is_independent_of_finisher_position(order):
+    from handlers.boss_state import _apply_boss_round_result
+
+    players = {
+        1: make_round_participant(attack="head", block=None),
+        2: make_round_participant(attack="body", block="head"),
+        3: make_round_participant(attack="body", block="head"),
+    }
+    battle = make_round_battle({user_id: players[user_id] for user_id in order},
+                               hits=4, round_num=1)
+
+    result = _apply_boss_round_result(battle, required_hits=5)
+
+    assert result["outcome"] == "victory"
+    assert [players[user_id]["rounds_survived"] for user_id in (1, 2, 3)] == [1, 1, 1]
+    assert all(players[user_id]["alive"] for user_id in (1, 2, 3))
+
+
 def test_lethal_hit_keeps_earlier_deaths_and_stops_later_participant_processing():
     from handlers.boss_state import _apply_boss_round_result
 
@@ -513,7 +587,7 @@ def test_lethal_hit_keeps_earlier_deaths_and_stops_later_participant_processing(
     assert finisher["alive"] is True
     assert finisher["hits"] == 1
     assert finisher["death_round"] is None
-    assert later_survivor == later_before
+    assert later_survivor == {**later_before, "rounds_survived": 1}
     assert [entry["participant"] for entry in result["round_results"]] == [finisher]
 
 

@@ -5,6 +5,7 @@ from telegram.ext import ContextTypes
 
 from handlers.elite_ball import build_elite_ball_inline_result
 from handlers.weather import build_weather_inline_result
+from database import is_deleted_user
 
 
 async def inline_query_dispatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -18,8 +19,13 @@ async def inline_query_dispatch(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     weather_result, cache_time = build_weather_inline_result(query, context)
+    results = [weather_result]
+    user = inline_query.from_user
+    if (user is not None and not getattr(user, "is_bot", False)
+            and not is_deleted_user(user.id)):
+        results.append(build_elite_ball_inline_result(user.id, query))
     await inline_query.answer(
-        [weather_result, build_elite_ball_inline_result()],
+        results,
         cache_time=cache_time,
         is_personal=True,
     )

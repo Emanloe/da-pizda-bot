@@ -9,10 +9,20 @@ from telegram.ext import CommandHandler, InlineQueryHandler
 
 
 CHAT_ID = -9902
+pytestmark = pytest.mark.usefixtures("temp_database")
+
+
+def charges():
+    from database import get_db
+
+    with get_db() as conn:
+        return set(conn.execute("SELECT chat_id, user_id FROM elite_ball_activations"))
 
 
 def _inline_update(query):
-    return SimpleNamespace(inline_query=SimpleNamespace(query=query, answer=AsyncMock()))
+    return SimpleNamespace(inline_query=SimpleNamespace(
+        query=query, from_user=SimpleNamespace(id=1, is_bot=False), answer=AsyncMock(),
+    ))
 
 
 def _telegram_user(user_id):
@@ -42,7 +52,9 @@ async def test_one_inline_answer_contains_weather_and_elite_ball(
     from handlers import weather
     from handlers.inline_query import inline_query_dispatch
     from handlers.elite_ball import ELITE_BALL_INLINE_RESULT_ID
+    from elite_ball_store import activate_ball
 
+    activate_ball(CHAT_ID, 1)
     monkeypatch.setattr(weather, "_fetch_weather_html", Mock(return_value=forecast))
     monkeypatch.setattr(weather, "_bonus_gif", Mock(return_value=None))
     monkeypatch.setattr(weather, "_bonus_photo", Mock(return_value=None))
@@ -55,10 +67,11 @@ async def test_one_inline_answer_contains_weather_and_elite_ball(
     assert len(results) == 2
     weather_result, ball_result = results
     assert weather_result.id != ball_result.id
-    assert ball_result.id == ELITE_BALL_INLINE_RESULT_ID
+    assert ball_result.id.startswith(f"{ELITE_BALL_INLINE_RESULT_ID}_")
     assert ball_result.title == "Элитный мячик знание"
-    assert ball_result.reply_markup is None
-    assert "/ball" in ball_result.input_message_content.message_text
+    assert ball_result.reply_markup.inline_keyboard[0][0].callback_data.startswith("ebi:")
+    assert query in ball_result.input_message_content.message_text
+    assert charges() == {(CHAT_ID, 1)}
     if forecast is None:
         assert weather_result.title == "Погода: Сделаю?"
         assert "не найден" in weather_result.input_message_content.message_text
@@ -108,7 +121,7 @@ async def test_chosen_weather_result_keeps_weather_attachment_path_not_ball(fake
     ))
     await weather.weather_chosen_inline_result(chosen_ball, fake_context)
     replace.assert_not_awaited()
-    assert fake_context.bot_data.get("elite_ball_waiting") is None
+    assert charges() == set()
 
 
 @pytest.mark.asyncio
@@ -139,13 +152,13 @@ async def test_real_telegram_inline_updates_have_no_chat_and_command_activates_i
     assert chosen.effective_chat is None
     await weather.weather_chosen_inline_result(chosen, fake_context)
     await elite_ball.ball_command(chosen, fake_context)
-    assert fake_context.bot_data.get("elite_ball_waiting") is None
+    assert charges() == set()
 
     command = _real_command_update()
     assert command.effective_chat.id == CHAT_ID
     await elite_ball.ball_command(command, fake_context)
     await elite_ball.ball_command(command, fake_context)
-    assert fake_context.bot_data["elite_ball_waiting"] == {(CHAT_ID, 1)}
+    assert charges() == {(CHAT_ID, 1)}
     assert fake_context.bot.send_message.await_args.kwargs == {
         "chat_id": CHAT_ID, "text": "Шар ожидает вопрос:",
     }
@@ -174,7 +187,7 @@ async def test_real_telegram_inline_updates_have_no_chat_and_command_activates_i
         question_update(1, CHAT_ID, "/summary"), question_update(1, CHAT_ID, None),
     ):
         await elite_ball.elite_ball_question(not_mine, fake_context)
-    assert fake_context.bot_data["elite_ball_waiting"] == {(CHAT_ID, 1)}
+    assert charges() == {(CHAT_ID, 1)}
     choice.assert_not_called()
 
     mine = question_update(1, CHAT_ID)
@@ -189,7 +202,7 @@ async def test_real_telegram_inline_updates_have_no_chat_and_command_activates_i
         reply_to_message_id=30,
     )
     mine.message.reply_text.assert_not_awaited()
-    assert fake_context.bot_data["elite_ball_waiting"] == set()
+    assert charges() == set()
     assert len(fake_context.job_queue.calls) == 2
 
 
@@ -211,13 +224,13 @@ async def test_ball_command_deletion_is_best_effort_and_never_clears_waiting(
     fake_context.bot.delete_message.assert_awaited_once_with(
         chat_id=CHAT_ID, message_id=25,
     )
-    assert fake_context.bot_data["elite_ball_waiting"] == {(CHAT_ID, 1)}
+    assert charges() == {(CHAT_ID, 1)}
 
     monkeypatch.setattr(
         elite_ball, "schedule_auto_delete", Mock(side_effect=RuntimeError("queue stopped")),
     )
     await elite_ball.ball_command(command, fake_context)
-    assert fake_context.bot_data["elite_ball_waiting"] == {(CHAT_ID, 1)}
+    assert charges() == {(CHAT_ID, 1)}
     assert fake_context.bot.send_message.await_count == 2
     assert len(fake_context.job_queue.calls) == 1
     choice.assert_not_called()
@@ -251,7 +264,7 @@ async def test_one_inline_handler_and_one_ball_command_are_wired(monkeypatch):
         def build(self):
             return FakeApplication()
 
-    monkeypatch.setattr(bot.nest_asyncio, "apply", lambda: None)
+    monkeypatch.setattr(bot, "run_ptb_and_http", AsyncMock())
     monkeypatch.setattr(bot, "init_db", lambda: None)
     monkeypatch.setattr(bot.Application, "builder", lambda: FakeBuilder())
     await bot.main()

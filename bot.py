@@ -1,9 +1,10 @@
 import datetime
 import logging
+import os
 from zoneinfo import ZoneInfo
 
-import nest_asyncio
 import pytz
+import uvicorn
 
 from telegram import (
     BotCommand,
@@ -19,6 +20,7 @@ from telegram.ext import (
     ContextTypes,
     InlineQueryHandler,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -70,13 +72,15 @@ from handlers.weather import (
 from handlers.inline_query import inline_query_dispatch
 
 from handlers.hyperborean_event import HYPERBOREAN_HUY_CHECK_MINUTES
+from handlers.moss_choice_event import moss_choice_callback
 from text_resources import get_text
 
 from handlers.duel import (
     duel_command,
     duel_select_callback,
-    duel_action_callback,
+    persistent_duel_action_callback as duel_action_callback,
     duel_stats_command,
+    inspect_command,
     duel_top_command,
     duel_delete_command,
     gnomed_command,
@@ -87,19 +91,28 @@ from handlers.duel import (
     hyperboreic_huy_daily_job,
     hyperboreic_huy_callback,
 )
+from handlers.persistent_duel_publisher import recover_persistent_duels, persistent_duel_worker_job
 from handlers.duel_items import (
     duel_item_event_callback,
     duel_item_event_job,
 )
 from handlers.duel_name import name_command
+from handlers.miniapp import duel_app_command
+from miniapp_api import create_miniapp_api
 from handlers.monthly_summary import monthly_summary_job, summary_command
-from handlers.elite_ball import ball_command, elite_ball_callback, elite_ball_question, ELITE_BALL_CALLBACK_DATA
+from handlers.elite_ball import (
+    ball_command, elite_ball_callback, elite_ball_inline_callback,
+    elite_ball_question, ELITE_BALL_CALLBACK_DATA, ELITE_BALL_INLINE_CALLBACK_PREFIX,
+)
 from handlers.dig import dig_command
+from handlers.modules import modules_command, modules_callback
 from handlers.huecrab import (
-    HUECRAB_CHECK_MINUTES,
-    huecrab_autoloot_job,
-    huecrab_event_job,
-    huecrab_tame_callback,
+    HUECRAB_CHECK_MINUTES, huecrab_autoloot_job,
+    huecrab_event_job, huecrab_tame_callback,
+)
+from handlers.gnome_deletion import (
+    dickpukku_command, dickpukku_callback, return_gnome_command,
+    guard_deleted_game_update,
 )
 
 
@@ -115,6 +128,7 @@ logger = logging.getLogger(__name__)
 
 BOT_COMMANDS = [
     BotCommand("start", get_text("menu.commands.start")),
+    BotCommand("dickpukku", get_text("menu.commands.dickpukku")),
     BotCommand("help", get_text("menu.commands.help")),
     BotCommand("donate", get_text("menu.commands.donate")),
     BotCommand("top", get_text("menu.commands.top")),
@@ -123,15 +137,18 @@ BOT_COMMANDS = [
     BotCommand("toggle_forward", get_text("menu.commands.toggle_forward")),
     BotCommand("toggle_autodelete", get_text("menu.commands.toggle_autodelete")),
     BotCommand("duel", get_text("menu.commands.duel")),
+    BotCommand("duel_app", "Дуэли: мини-приложение"),
     BotCommand("name", get_text("menu.commands.name")),
     BotCommand("summary", get_text("menu.commands.summary")),
     BotCommand("dig", get_text("menu.commands.dig")),
     BotCommand("ball", get_text("menu.commands.ball")),
     BotCommand("duel_stats", get_text("menu.commands.duel_stats")),
+    BotCommand("inspect", get_text("menu.commands.inspect")),
     BotCommand("duel_top", get_text("menu.commands.duel_top")),
     BotCommand("duel_delete", get_text("menu.commands.duel_delete")),
     BotCommand("boss", get_text("menu.commands.boss")),
     BotCommand("boss_reg", get_text("menu.commands.boss_reg")),
+    BotCommand("modules", get_text("modules.title")),
 ]
 
 
@@ -143,6 +160,9 @@ async def post_init(application: Application):
         )
     except Exception:
         logger.exception("Не удалось установить команды бота")
+
+
+    await recover_persistent_duels(application.bot, job_queue=application.job_queue)
 
 
 async def bot_chat_member_update(
@@ -183,8 +203,6 @@ async def bot_chat_member_update(
 
 
 async def main():
-    nest_asyncio.apply()
-
     init_db()
 
     application = (
@@ -199,6 +217,10 @@ async def main():
     # ============================================================
 
     if application.job_queue:
+        application.job_queue.run_repeating(
+            persistent_duel_worker_job, interval=2, first=2,
+            name="persistent_duel_worker",
+        )
         tz = pytz.timezone(DUEL_TIMEZONE)
 
         # Ежедневная игра / красотка
@@ -249,15 +271,11 @@ async def main():
             )
 
         application.job_queue.run_repeating(
-            huecrab_event_job,
-            interval=HUECRAB_CHECK_MINUTES * 60,
-            first=180,
-            name="huecrab_event_job",
+            huecrab_event_job, interval=HUECRAB_CHECK_MINUTES * 60,
+            first=180, name="huecrab_event_job",
         )
         application.job_queue.run_repeating(
-            huecrab_autoloot_job,
-            interval=5,
-            first=5,
+            huecrab_autoloot_job, interval=5, first=5,
             name="huecrab_autoloot_job",
         )
 
@@ -270,6 +288,8 @@ async def main():
     # CHAT MEMBER
     # ============================================================
 
+    application.add_handler(TypeHandler(Update, guard_deleted_game_update), group=-2)
+
     application.add_handler(
         ChatMemberHandler(
             bot_chat_member_update,
@@ -280,6 +300,13 @@ async def main():
     # ============================================================
     # COMMANDS
     # ============================================================
+
+    application.add_handler(CommandHandler("dickpukku", dickpukku_command))
+    application.add_handler(CommandHandler("return_gnome", return_gnome_command))
+    application.add_handler(CallbackQueryHandler(
+        dickpukku_callback,
+        pattern=r"^dickpukku:[A-Za-z0-9_-]{22}:(?:start|yes|no)$",
+    ))
 
     application.add_handler(
         CommandHandler(
@@ -373,6 +400,12 @@ async def main():
             pattern=rf"^{ELITE_BALL_CALLBACK_DATA}$",
         )
     )
+    application.add_handler(
+        CallbackQueryHandler(
+            elite_ball_inline_callback,
+            pattern=rf"^{ELITE_BALL_INLINE_CALLBACK_PREFIX}[A-Za-z0-9_-]{{24}}$",
+        )
+    )
 
     # ============================================================
     # DUEL
@@ -384,11 +417,16 @@ async def main():
             duel_command,
         )
     )
+    application.add_handler(CommandHandler("duel_app", duel_app_command))
 
     application.add_handler(CommandHandler("name", name_command))
     application.add_handler(CommandHandler("summary", summary_command))
     application.add_handler(CommandHandler("dig", dig_command))
     application.add_handler(CommandHandler("ball", ball_command))
+    application.add_handler(CommandHandler("modules", modules_command))
+    application.add_handler(CallbackQueryHandler(
+        modules_callback, pattern=r"^module_(?:toggle:|close$)",
+    ))
 
     application.add_handler(
         CallbackQueryHandler(
@@ -425,6 +463,8 @@ async def main():
         )
     )
 
+    application.add_handler(CommandHandler("inspect", inspect_command))
+
     application.add_handler(
         CommandHandler(
             "duel_top",
@@ -460,7 +500,7 @@ async def main():
     application.add_handler(
         CallbackQueryHandler(
             boss_callback,
-            pattern=r"^boss_(join|attack_|block_)",
+            pattern=r"^boss_(join$|reg_next$|attack_|block_)",
         )
     )
 
@@ -472,6 +512,13 @@ async def main():
         CallbackQueryHandler(
             hyperboreic_huy_callback,
             pattern=r"^hyperboreic_huy(?:_(?:self|other))?$",
+        )
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(
+            moss_choice_callback,
+            pattern=r"^moss_choice:[0-9]+:(?:clever|wise)$",
         )
     )
 
@@ -514,9 +561,42 @@ async def main():
 
     logger.info("Bot starting...")
 
-    await application.run_polling(
-        drop_pending_updates=False,
-    )
+    await run_ptb_and_http(application)
+
+
+async def run_ptb_and_http(application: Application, http_server=None) -> None:
+    """Keep PTB polling, its jobs, and the one ASGI server on one event loop."""
+    if http_server is None:
+        http_server = uvicorn.Server(uvicorn.Config(
+            create_miniapp_api(telegram_bot=application.bot, job_queue=application.job_queue),
+            host=os.getenv("MINIAPP_HTTP_HOST", "127.0.0.1"),
+            port=int(os.getenv("MINIAPP_HTTP_PORT", "8000")),
+            workers=1, lifespan="off", access_log=False,
+        ))
+    initialized = polling = started = False
+    try:
+        await application.initialize()
+        initialized = True
+        if application.post_init is not None:
+            await application.post_init(application)
+        if application.updater is None:
+            raise RuntimeError("PTB polling updater is unavailable")
+        await application.updater.start_polling(drop_pending_updates=False)
+        polling = True
+        await application.start()
+        started = True
+        await http_server.serve()
+    finally:
+        try:
+            if polling:
+                await application.updater.stop()
+        finally:
+            try:
+                if started:
+                    await application.stop()
+            finally:
+                if initialized:
+                    await application.shutdown()
 
 
 if __name__ == "__main__":

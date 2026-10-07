@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import sqlite3
@@ -437,6 +438,7 @@ async def test_item_event_callback_rejects_invalid_then_claims_once_and_edits_sa
     await duel_items.duel_item_event_callback(update, fake_context)
     query.answer.assert_awaited_once_with("Сначала стань гномом.", show_alert=True)
     choice.assert_not_called()
+    assert fake_context.job_queue.calls == []
 
     claimant = make_user(11, None, "<claimant & one>")
     db.get_or_create_duel_user(claimant, chat_id)
@@ -451,6 +453,10 @@ async def test_item_event_callback_rejects_invalid_then_claims_once_and_edits_sa
     assert edit["reply_markup"] is None
     assert "&lt;claimant &amp; one&gt;" in edit["text"]
     assert duel_items.get_duel_item_name(choice.return_value["id"]) in edit["text"]
+    assert fake_context.job_queue.calls[0][1] == 60
+    assert fake_context.job_queue.calls[0][2]["data"] == {
+        "chat_id": chat_id, "message_ids": [777],
+    }
 
     second = make_user(12, "second")
     db.get_or_create_duel_user(second, chat_id)
@@ -464,3 +470,40 @@ async def test_item_event_callback_rejects_invalid_then_claims_once_and_edits_sa
     await duel_items.duel_item_event_callback(update, fake_context)
     query.answer.assert_awaited_once_with("Уже утащили.", show_alert=True)
     assert len(db.get_duel_inventory(chat_id, claimant.id)) == 1
+    assert len(fake_context.job_queue.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_four_claimed_item_results_delete_independently_after_one_minute(
+    temp_database, fake_context, monkeypatch,
+):
+    import database as db
+    from handlers import duel_items
+
+    chats = (-911, -912, -913, -914)
+    monkeypatch.setattr(duel_items.random, "choice", Mock(return_value=duel_items.DUEL_ITEMS[0]))
+    monkeypatch.setattr(duel_items.random, "random", Mock(return_value=1.0))
+    updates = []
+    for index, chat_id in enumerate(chats):
+        user = make_user(index + 1, f"claimant{index}")
+        db.get_or_create_duel_user(user, chat_id)
+        event_id = db.create_duel_item_event(chat_id)
+        db.set_duel_item_event_message(event_id, 777)
+        update, _ = item_event_update(chat_id, user, event_id)
+        updates.append(update)
+
+    await asyncio.gather(*(
+        duel_items.duel_item_event_callback(update, fake_context) for update in updates
+    ))
+
+    assert fake_context.bot.edit_message_text.await_count == 4
+    assert len(fake_context.job_queue.calls) == 4
+    assert {entry[2]["data"]["chat_id"] for entry in fake_context.job_queue.calls} == set(chats)
+    for callback, delay, kwargs in fake_context.job_queue.calls:
+        assert delay == 60
+        assert kwargs["data"]["message_ids"] == [777]
+        fake_context.job.data = kwargs["data"]
+        await callback(fake_context)
+    assert fake_context.bot.delete_message.await_count == 4
+    assert {entry.kwargs["chat_id"] for entry in
+            fake_context.bot.delete_message.await_args_list} == set(chats)

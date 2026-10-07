@@ -59,6 +59,149 @@ def _clean_username(username: str | None) -> str | None:
     return cleaned if cleaned else None
 
 
+class DeletedGnomeError(ValueError):
+    """A game write attempted to recreate a voluntarily deleted player."""
+
+
+def is_deleted_user_in_transaction(cursor, user_id: int) -> bool:
+    return cursor.execute(
+        "SELECT 1 FROM deleted_users WHERE user_id = ?", (user_id,)
+    ).fetchone() is not None
+
+
+def is_deleted_user(user_id: int) -> bool:
+    with get_db() as conn:
+        return is_deleted_user_in_transaction(conn.cursor(), user_id)
+
+
+def gnome_profile_reset_at_ms_in_transaction(cursor, user_id: int) -> int:
+    row = cursor.execute(
+        "SELECT reset_at_ms FROM gnome_profile_resets WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _purge_gnome_in_transaction(cursor, user_id: int) -> None:
+    """Remove personal state and cancel live shared operations, in one transaction."""
+    cursor.execute("""UPDATE duel_sessions SET status = 'cancelled', deadline_at = NULL,
+                   updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+                   WHERE status IN ('publishing', 'active')
+                     AND (player1_user_id = ? OR player2_user_id = ?)""", (user_id, user_id))
+    cursor.execute("""UPDATE duel_outbox SET status = 'cancelled', lease_until = NULL
+                   WHERE status IN ('pending', 'leased') AND duel_id IN
+                   (SELECT id FROM duel_sessions WHERE player1_user_id = ? OR player2_user_id = ?)""",
+                   (user_id, user_id))
+    for table, column in (
+        ("users", "user_id"), ("duel_users", "user_id"),
+        ("duel_inventory", "user_id"), ("huecrab_owners", "user_id"),
+        ("duel_dig_daily", "user_id"),
+        ("miniapp_launch_tokens", "user_id"), ("miniapp_sessions", "user_id"),
+        ("elite_ball_activations", "user_id"),
+        ("elite_ball_inline_actions", "owner_user_id"),
+    ):
+        cursor.execute(f"DELETE FROM {table} WHERE {column} = ?", (user_id,))
+    # These tables are additive/lazy in older installations.
+    for table in ("boss_next_registrations", "boss_registrations"):
+        if cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone():
+            cursor.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
+
+
+def delete_gnome(user_id: int, username: str | None) -> bool:
+    """Commit the permanent deny-list entry and complete personal purge together."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(cursor, user_id):
+            return False
+        cursor.execute(
+            """INSERT INTO deleted_users (user_id, username, deleted_at)
+               VALUES (?, ?, ?)""",
+            (user_id, _clean_username(username), _utc_now().isoformat(timespec="microseconds")),
+        )
+        cursor.execute(
+            """INSERT INTO gnome_profile_resets (user_id, reset_at_ms)
+               VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET
+               reset_at_ms = excluded.reset_at_ms""",
+            (user_id, int(_utc_now().timestamp() * 1000)),
+        )
+        _purge_gnome_in_transaction(cursor, user_id)
+        return True
+
+
+def find_deleted_gnome_by_username(username: str) -> tuple[str, int | None]:
+    """Resolve tombstone metadata for a subsequent live Telegram identity check."""
+    clean = _clean_username(username)
+    if not clean:
+        return "not_found", None
+    with get_db() as conn:
+        return _find_deleted_gnome_in_transaction(conn.cursor(), clean)
+
+
+def return_gnome(username: str, *, verified_user_id: int | None = None) -> str:
+    """Return only the tombstone whose live Telegram identity was verified."""
+    if type(verified_user_id) is not int or verified_user_id <= 0:
+        return "verification_failed"
+    clean = _clean_username(username)
+    if not clean:
+        return "not_found"
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        status, candidate = _find_deleted_gnome_in_transaction(cursor, clean)
+        if status != "candidate":
+            return status
+        if candidate != verified_user_id:
+            return "verification_failed"
+        return _return_deleted_user_in_transaction(cursor, candidate)
+
+
+def _find_deleted_gnome_in_transaction(cursor, clean: str) -> tuple[str, int | None]:
+    rows = cursor.execute(
+        "SELECT user_id FROM deleted_users WHERE LOWER(username) = LOWER(?)", (clean,)
+    ).fetchall()
+    if len(rows) > 1:
+        return "ambiguous", None
+    if not rows:
+        active = cursor.execute(
+            """SELECT 1 FROM users WHERE LOWER(username) = LOWER(?)
+               UNION SELECT 1 FROM duel_users WHERE LOWER(username) = LOWER(?) LIMIT 1""",
+            (clean, clean),
+        ).fetchone()
+        return ("already_active" if active else "not_found"), None
+    user_id = rows[0][0]
+    active_alias = cursor.execute(
+        """SELECT 1 FROM users WHERE user_id != ? AND LOWER(username) = LOWER(?)
+           UNION SELECT 1 FROM duel_users WHERE user_id != ? AND LOWER(username) = LOWER(?)
+           LIMIT 1""", (user_id, clean, user_id, clean),
+    ).fetchone()
+    return ("ambiguous", None) if active_alias else ("candidate", user_id)
+
+
+def _return_deleted_user_in_transaction(cursor, user_id: int) -> str:
+    _purge_gnome_in_transaction(cursor, user_id)
+    cursor.execute("DELETE FROM deleted_users WHERE user_id = ?", (user_id,))
+    return "returned"
+
+
+def return_gnome_by_id(user_id: int) -> str:
+    """Administrator fallback for a tombstone with no usable username."""
+    if type(user_id) is not int or user_id <= 0:
+        return "not_found"
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(cursor, user_id):
+            return _return_deleted_user_in_transaction(cursor, user_id)
+        active = cursor.execute(
+            """SELECT 1 FROM users WHERE user_id = ?
+               UNION SELECT 1 FROM duel_users WHERE user_id = ? LIMIT 1""",
+            (user_id, user_id),
+        ).fetchone()
+        return "already_active" if active else "not_found"
+
+
 def format_user_title_plain(user_data: dict, *, include_dwarf_name: bool = True) -> str:
     """Participant title for plain text, including Telegram buttons."""
     username = _clean_username(user_data.get('username'))
@@ -88,6 +231,18 @@ def init_db():
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
+
+        cursor.execute("""CREATE TABLE IF NOT EXISTS deleted_users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            deleted_at TEXT NOT NULL
+        )""")
+        cursor.execute("""CREATE INDEX IF NOT EXISTS idx_deleted_users_username
+                          ON deleted_users (username COLLATE NOCASE)""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS gnome_profile_resets (
+            user_id INTEGER PRIMARY KEY,
+            reset_at_ms INTEGER NOT NULL
+        )""")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -136,6 +291,17 @@ def init_db():
                 forward_reply_enabled INTEGER DEFAULT 1,
                 auto_delete_enabled INTEGER DEFAULT 1,
                 boss_enabled INTEGER DEFAULT 1
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS chat_module_settings (
+                chat_id INTEGER NOT NULL,
+                module_id TEXT NOT NULL,
+                enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+                updated_at TEXT NOT NULL,
+                updated_by INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, module_id)
             )
         """)
 
@@ -225,6 +391,9 @@ def init_db():
         if "dwarf_name" not in cols:
             cursor.execute("ALTER TABLE duel_users ADD COLUMN dwarf_name TEXT")
 
+        if "gnome_variant" not in cols:
+            cursor.execute("ALTER TABLE duel_users ADD COLUMN gnome_variant TEXT")
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS duel_inventory (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -237,6 +406,12 @@ def init_db():
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_duel_inventory_owner
             ON duel_inventory (chat_id, user_id, id)
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS generated_item_names (
+                item_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL
+            )
         """)
 
         cursor.execute("""
@@ -274,7 +449,6 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_duel_item_events_autoloot
             ON duel_item_events (claimed, published_at)
         """)
-
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS huecrab_owners (
                 chat_id INTEGER NOT NULL,
@@ -300,6 +474,19 @@ def init_db():
         """)
 
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS moss_choice_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                event_date TEXT NOT NULL,
+                message_id INTEGER,
+                claimed_by INTEGER,
+                choice TEXT CHECK (choice IN ('clever', 'wise')),
+                claimed_at TEXT,
+                UNIQUE (chat_id, event_date)
+            )
+        """)
+
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS duel_dig_daily (
                 chat_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
@@ -318,6 +505,199 @@ def init_db():
                 bosses_killed INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (chat_id, month)
             )
+        """)
+
+        # Durable ordinary duels shared by the Telegram adapter and future clients.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS duel_sessions (
+                id INTEGER PRIMARY KEY,
+                chat_id INTEGER NOT NULL,
+                player1_user_id INTEGER NOT NULL,
+                player2_user_id INTEGER NOT NULL,
+                player1_snapshot_json TEXT NOT NULL,
+                player2_snapshot_json TEXT NOT NULL,
+                attacker_user_id INTEGER NOT NULL,
+                defender_user_id INTEGER NOT NULL,
+                status TEXT NOT NULL
+                    CHECK (status IN ('publishing', 'active', 'finished', 'cancelled')),
+                phase TEXT NOT NULL CHECK (phase IN ('attack', 'block')),
+                attack_zone TEXT
+                    CHECK (attack_zone IS NULL OR attack_zone IN ('head', 'body', 'dick')),
+                round_no INTEGER NOT NULL DEFAULT 1 CHECK (round_no >= 1),
+                turn_id INTEGER NOT NULL DEFAULT 1 CHECK (turn_id >= 1),
+                deadline_at INTEGER,
+                message_id INTEGER,
+                original_message_id INTEGER,
+                result_json TEXT,
+                pocket_done_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                finished_at INTEGER,
+                CHECK (player1_user_id <> player2_user_id),
+                CHECK (
+                    (attacker_user_id = player1_user_id AND defender_user_id = player2_user_id)
+                    OR
+                    (attacker_user_id = player2_user_id AND defender_user_id = player1_user_id)
+                ),
+                CHECK (
+                    (phase = 'attack' AND attack_zone IS NULL)
+                    OR
+                    (phase = 'block' AND attack_zone IS NOT NULL)
+                ),
+                CHECK (
+                    (status = 'active' AND deadline_at IS NOT NULL)
+                    OR
+                    (status <> 'active' AND deadline_at IS NULL)
+                ),
+                CHECK (
+                    status <> 'finished'
+                    OR (finished_at IS NOT NULL AND result_json IS NOT NULL)
+                ),
+                CHECK (pocket_done_at IS NULL OR status = 'finished')
+            )
+        """)
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_duel_sessions_one_active_chat
+            ON duel_sessions (chat_id)
+            WHERE status IN ('publishing', 'active')
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_duel_sessions_due
+            ON duel_sessions (deadline_at, id)
+            WHERE status = 'active'
+        """)
+
+        # Durable ordinary-duel publication intents.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS duel_outbox (
+                id INTEGER PRIMARY KEY,
+                chat_id INTEGER NOT NULL,
+                duel_id INTEGER NOT NULL,
+                kind TEXT NOT NULL CHECK (kind IN (
+                    'attack_prompt', 'block_prompt', 'final_result', 'pocket_drop'
+                )),
+                turn_id INTEGER,
+                payload_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'leased', 'delivered', 'cancelled')),
+                message_id INTEGER,
+                attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+                lease_until INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                delivered_at INTEGER,
+                CHECK (
+                    (kind = 'pocket_drop' AND turn_id IS NULL)
+                    OR (kind <> 'pocket_drop' AND turn_id IS NOT NULL AND turn_id >= 1)
+                ),
+                CHECK ((status = 'leased') = (lease_until IS NOT NULL)),
+                CHECK ((status = 'delivered') = (delivered_at IS NOT NULL))
+            )
+        """)
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_duel_outbox_turn
+            ON duel_outbox (chat_id, duel_id, kind, turn_id)
+            WHERE kind IN ('attack_prompt', 'block_prompt')
+        """)
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_duel_outbox_once
+            ON duel_outbox (chat_id, duel_id, kind)
+            WHERE kind IN ('final_result', 'pocket_drop')
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_duel_outbox_retry
+            ON duel_outbox (chat_id, status, lease_until, id)
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS miniapp_launch_tokens (
+                token_digest TEXT PRIMARY KEY,
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                consumed_at INTEGER,
+                launch_message_id INTEGER,
+                CHECK (expires_at > created_at)
+            )
+        """)
+        cursor.execute("PRAGMA table_info(miniapp_launch_tokens)")
+        launch_cols = {row[1] for row in cursor.fetchall()}
+        if "launch_message_id" not in launch_cols:
+            cursor.execute("ALTER TABLE miniapp_launch_tokens ADD COLUMN launch_message_id INTEGER")
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_miniapp_launch_expiry
+            ON miniapp_launch_tokens (expires_at)
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS miniapp_sessions (
+                token_digest TEXT PRIMARY KEY,
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                CHECK (expires_at > created_at)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_miniapp_session_expiry
+            ON miniapp_sessions (expires_at)
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS elite_ball_activations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE (chat_id, user_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_elite_ball_activations_oldest
+            ON elite_ball_activations (user_id, id)
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS elite_ball_inline_actions (
+                token_digest TEXT PRIMARY KEY,
+                owner_user_id INTEGER NOT NULL,
+                question TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                consumed_at INTEGER,
+                answer TEXT,
+                CHECK (expires_at > created_at)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_elite_ball_inline_actions_expiry
+            ON elite_ball_inline_actions (expires_at)
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS boss_battle_results (
+                chat_id INTEGER NOT NULL,
+                battle_id TEXT NOT NULL,
+                boss_id TEXT NOT NULL,
+                boss_name TEXT NOT NULL,
+                finished_at INTEGER NOT NULL,
+                outcome TEXT NOT NULL CHECK (outcome IN ('victory', 'defeat')),
+                hits INTEGER NOT NULL,
+                required_hits INTEGER NOT NULL,
+                rounds INTEGER NOT NULL,
+                participants_json TEXT NOT NULL,
+                hero_user_id INTEGER,
+                rewarded_user_ids_json TEXT NOT NULL DEFAULT '[]',
+                item_loot_json TEXT,
+                narrative_json TEXT,
+                PRIMARY KEY (chat_id, battle_id)
+            )
+        """)
+        cursor.execute("PRAGMA table_info(boss_battle_results)")
+        boss_result_columns = {row[1] for row in cursor.fetchall()}
+        if "narrative_json" not in boss_result_columns:
+            cursor.execute("ALTER TABLE boss_battle_results ADD COLUMN narrative_json TEXT")
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_boss_battle_results_recent
+            ON boss_battle_results (chat_id, finished_at DESC)
         """)
 
         # Fix broken initial data where points=0 and losses=20 from prior seed bug
@@ -342,7 +722,8 @@ def init_db():
                 COALESCE(REPLACE(username, '@', ''), first_name, 'Гном'), 
                 20, 0, 0, 0, 0, 0, ?, NULL
             FROM users 
-            WHERE is_bot = 0
+            WHERE is_bot = 0 AND NOT EXISTS
+                (SELECT 1 FROM deleted_users WHERE deleted_users.user_id = users.user_id)
         """, (today_str,))
 
 
@@ -417,7 +798,7 @@ def set_boss_enabled(chat_id: int, enabled: bool):
 # 🗡️ ЛОГИКА ДУЭЛЕЙ
 # ==========================================
 
-def _reset_user_if_new_day(cursor, row) -> dict | None:
+def _reset_user_if_new_day(cursor, row, *, persist: bool = True) -> dict | None:
     if not row:
         return None
 
@@ -434,12 +815,13 @@ def _reset_user_if_new_day(cursor, row) -> dict | None:
         last_stolen_by = None
         daily_wins = 0
         last_activity_date = today_str
-        cursor.execute("""
-            UPDATE duel_users
-            SET points = 20, dick_stolen_today = 0, last_stolen_by = NULL,
-                daily_wins = 0, last_activity_date = ?
-            WHERE user_id = ? AND chat_id = ?
-        """, (today_str, user_id, chat_id))
+        if persist:
+            cursor.execute("""
+                UPDATE duel_users
+                SET points = 20, dick_stolen_today = 0, last_stolen_by = NULL,
+                    daily_wins = 0, last_activity_date = ?
+                WHERE user_id = ? AND chat_id = ?
+            """, (today_str, user_id, chat_id))
 
     return {
         "user_id": user_id,
@@ -466,6 +848,9 @@ def get_or_create_duel_user(tg_user, chat_id: int) -> dict:
 
     with get_db() as conn:
         cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(cursor, tg_user.id):
+            raise DeletedGnomeError(tg_user.id)
 
         cursor.execute("""
             SELECT user_id, chat_id, username, display_name, points, wins, losses,
@@ -504,13 +889,39 @@ def get_or_create_duel_user(tg_user, chat_id: int) -> dict:
         return _reset_user_if_new_day(cursor, row)
 
 
-def get_duel_user_by_username(username: str, chat_id: int) -> dict | None:
+def get_duel_user_by_id_in_transaction(cursor, chat_id: int, user_id: int, *, read_only: bool = False) -> dict | None:
+    """Read a registered chat participant using the caller's transaction.
+
+    Like the existing public getter, this applies the lazy daily reset.
+    It never registers a missing participant.
+    """
+    if is_deleted_user_in_transaction(cursor, user_id):
+        return None
+    cursor.execute("""
+        SELECT user_id, chat_id, username, display_name, points, wins, losses,
+               stolen_dicks_count, dick_stolen_count, dick_stolen_today,
+               last_activity_date, last_stolen_by, daily_wins, dwarf_name
+        FROM duel_users WHERE chat_id = ? AND user_id = ?
+    """, (chat_id, user_id))
+    return _reset_user_if_new_day(cursor, cursor.fetchone(), persist=not read_only)
+
+
+def get_duel_user_by_id(chat_id: int, user_id: int, *, read_only: bool = False) -> dict | None:
+    """Read an existing duel participant in one chat without registering them."""
+    with get_db() as conn:
+        return get_duel_user_by_id_in_transaction(conn.cursor(), chat_id, user_id,
+                                                  read_only=read_only)
+
+
+def get_duel_user_by_username(username: str, chat_id: int, *, read_only: bool = False) -> dict | None:
     clean_search = _clean_username(username)
     if not clean_search:
         return None
 
     with get_db() as conn:
         cursor = conn.cursor()
+        if not read_only:
+            cursor.execute("BEGIN IMMEDIATE")
 
         cursor.execute("""
             SELECT user_id, chat_id, username, display_name, points, wins, losses,
@@ -518,16 +929,21 @@ def get_duel_user_by_username(username: str, chat_id: int) -> dict | None:
                    last_activity_date, last_stolen_by, daily_wins, dwarf_name
             FROM duel_users 
             WHERE chat_id = ? AND (LOWER(username) = LOWER(?) OR LOWER(display_name) = LOWER(?))
+              AND NOT EXISTS (SELECT 1 FROM deleted_users AS d WHERE d.user_id = duel_users.user_id)
         """, (chat_id, clean_search, clean_search))
         row = cursor.fetchone()
 
         if row:
-            return _reset_user_if_new_day(cursor, row)
+            return _reset_user_if_new_day(cursor, row, persist=not read_only)
+
+        if read_only:
+            return None
 
         cursor.execute("""
             SELECT user_id, username, first_name 
             FROM users 
             WHERE chat_id = ? AND (LOWER(username) = LOWER(?) OR LOWER(first_name) = LOWER(?))
+              AND NOT EXISTS (SELECT 1 FROM deleted_users AS d WHERE d.user_id = users.user_id)
         """, (chat_id, clean_search, clean_search))
         user_row = cursor.fetchone()
 
@@ -652,72 +1068,83 @@ def apply_duel_result_plan(
 ) -> tuple[int, int]:
     with get_db() as conn:
         cursor = conn.cursor()
-        winner = result_plan["winner"]
-        loser = result_plan["loser"]
+        cursor.execute("BEGIN IMMEDIATE")
+        return apply_duel_result_plan_in_transaction(cursor, chat_id, result_plan)
 
-        if result_plan["is_dick_stolen"]:
-            cursor.execute("""
-                UPDATE duel_users
-                SET points = ?, wins = wins + ?, daily_wins = daily_wins + ?,
-                    stolen_dicks_count = stolen_dicks_count + ?
-                WHERE user_id = ? AND chat_id = ?
-            """, (
-                winner["points"],
-                winner["wins_increment"],
-                winner["daily_wins_increment"],
-                winner["stolen_dicks_count_increment"],
-                winner["user_id"],
-                chat_id,
-            ))
 
-            cursor.execute("""
-                UPDATE duel_users
-                SET points = ?, losses = losses + ?,
-                    dick_stolen_count = dick_stolen_count + ?,
-                    dick_stolen_today = ?, last_stolen_by = ?
-                WHERE user_id = ? AND chat_id = ?
-            """, (
-                loser["points"],
-                loser["losses_increment"],
-                loser["dick_stolen_count_increment"],
-                loser["dick_stolen_today"],
-                loser["last_stolen_by"],
-                loser["user_id"],
-                chat_id,
-            ))
-        else:
-            cursor.execute("""
-                UPDATE duel_users
-                SET points = ?, wins = wins + ?, daily_wins = daily_wins + ?
-                WHERE user_id = ? AND chat_id = ?
-            """, (
-                winner["points"],
-                winner["wins_increment"],
-                winner["daily_wins_increment"],
-                winner["user_id"],
-                chat_id,
-            ))
+def apply_duel_result_plan_in_transaction(
+    cursor, chat_id: int, result_plan: dict,
+) -> tuple[int, int]:
+    """Apply the existing result and monthly counters on the caller's connection."""
+    winner = result_plan["winner"]
+    loser = result_plan["loser"]
+    if (is_deleted_user_in_transaction(cursor, winner["user_id"])
+            or is_deleted_user_in_transaction(cursor, loser["user_id"])):
+        raise DeletedGnomeError("duel participant deleted")
 
-            cursor.execute("""
-                UPDATE duel_users
-                SET points = ?, losses = losses + ?
-                WHERE user_id = ? AND chat_id = ?
-            """, (
-                loser["points"],
-                loser["losses_increment"],
-                loser["user_id"],
-                chat_id,
-            ))
-
-        _increment_monthly_chat_stats(
-            cursor,
+    if result_plan["is_dick_stolen"]:
+        cursor.execute("""
+            UPDATE duel_users
+            SET points = ?, wins = wins + ?, daily_wins = daily_wins + ?,
+                stolen_dicks_count = stolen_dicks_count + ?
+            WHERE user_id = ? AND chat_id = ?
+        """, (
+            winner["points"],
+            winner["wins_increment"],
+            winner["daily_wins_increment"],
+            winner["stolen_dicks_count_increment"],
+            winner["user_id"],
             chat_id,
-            moscow_month_key(),
-            duels=1,
-            dicks_stolen=int(result_plan["is_dick_stolen"]),
-        )
+        ))
 
-        return winner["points"], loser["points"]
+        cursor.execute("""
+            UPDATE duel_users
+            SET points = ?, losses = losses + ?,
+                dick_stolen_count = dick_stolen_count + ?,
+                dick_stolen_today = ?, last_stolen_by = ?
+            WHERE user_id = ? AND chat_id = ?
+        """, (
+            loser["points"],
+            loser["losses_increment"],
+            loser["dick_stolen_count_increment"],
+            loser["dick_stolen_today"],
+            loser["last_stolen_by"],
+            loser["user_id"],
+            chat_id,
+        ))
+    else:
+        cursor.execute("""
+            UPDATE duel_users
+            SET points = ?, wins = wins + ?, daily_wins = daily_wins + ?
+            WHERE user_id = ? AND chat_id = ?
+        """, (
+            winner["points"],
+            winner["wins_increment"],
+            winner["daily_wins_increment"],
+            winner["user_id"],
+            chat_id,
+        ))
+
+        cursor.execute("""
+            UPDATE duel_users
+            SET points = ?, losses = losses + ?
+            WHERE user_id = ? AND chat_id = ?
+        """, (
+            loser["points"],
+            loser["losses_increment"],
+            loser["user_id"],
+            chat_id,
+        ))
+
+    _increment_monthly_chat_stats(
+        cursor,
+        chat_id,
+        moscow_month_key(),
+        duels=1,
+        dicks_stolen=int(result_plan["is_dick_stolen"]),
+    )
+
+    return winner["points"], loser["points"]
 
 
 def apply_duel_berserk(
@@ -728,27 +1155,40 @@ def apply_duel_berserk(
 ) -> bool:
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            UPDATE duel_users
-            SET dick_stolen_count = dick_stolen_count + 1,
-                dick_stolen_today = 1, last_stolen_by = ?
-            WHERE user_id = ? AND chat_id = ? AND dick_stolen_today = 0
-            """,
-            (berserker_title, victim_user_id, chat_id),
+        cursor.execute("BEGIN IMMEDIATE")
+        return apply_duel_berserk_in_transaction(
+            cursor, chat_id, berserker_user_id, victim_user_id, berserker_title,
         )
-        if cursor.rowcount == 0:
-            return False
 
-        cursor.execute(
-            """
-            UPDATE duel_users
-            SET stolen_dicks_count = stolen_dicks_count + 1
-            WHERE user_id = ? AND chat_id = ?
-            """,
-            (berserker_user_id, chat_id),
-        )
-        return True
+
+def apply_duel_berserk_in_transaction(
+    cursor, chat_id: int, berserker_user_id: int, victim_user_id: int,
+    berserker_title: str,
+) -> bool:
+    if (is_deleted_user_in_transaction(cursor, berserker_user_id)
+            or is_deleted_user_in_transaction(cursor, victim_user_id)):
+        return False
+    cursor.execute(
+        """
+        UPDATE duel_users
+        SET dick_stolen_count = dick_stolen_count + 1,
+            dick_stolen_today = 1, last_stolen_by = ?
+        WHERE user_id = ? AND chat_id = ? AND dick_stolen_today = 0
+        """,
+        (berserker_title, victim_user_id, chat_id),
+    )
+    if cursor.rowcount == 0:
+        return False
+
+    cursor.execute(
+        """
+        UPDATE duel_users
+        SET stolen_dicks_count = stolen_dicks_count + 1
+        WHERE user_id = ? AND chat_id = ?
+        """,
+        (berserker_user_id, chat_id),
+    )
+    return True
 
 
 # ==========================================
@@ -759,6 +1199,9 @@ def add_duel_inventory_item(chat_id: int, user_id: int, item_id: str) -> dict:
     """Добавляет один отдельный экземпляр предмета."""
     with get_db() as conn:
         cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(cursor, user_id):
+            raise DeletedGnomeError(user_id)
         cursor.execute(
             """
             INSERT INTO duel_inventory (chat_id, user_id, item_id)
@@ -776,26 +1219,29 @@ def add_duel_inventory_item(chat_id: int, user_id: int, item_id: str) -> dict:
 
 def get_duel_inventory(chat_id: int, user_id: int) -> list[dict]:
     with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT id, chat_id, user_id, item_id, created_at
-            FROM duel_inventory
-            WHERE chat_id = ? AND user_id = ?
-            ORDER BY id
-            """,
-            (chat_id, user_id),
-        )
-        return [
-            {
-                "id": row[0],
-                "chat_id": row[1],
-                "user_id": row[2],
-                "item_id": row[3],
-                "created_at": row[4],
-            }
-            for row in cursor.fetchall()
-        ]
+        return get_duel_inventory_in_transaction(conn.cursor(), chat_id, user_id)
+
+
+def get_duel_inventory_in_transaction(cursor, chat_id: int, user_id: int) -> list[dict]:
+    cursor.execute(
+        """
+        SELECT id, chat_id, user_id, item_id, created_at
+        FROM duel_inventory
+        WHERE chat_id = ? AND user_id = ?
+        ORDER BY id
+        """,
+        (chat_id, user_id),
+    )
+    return [
+        {
+            "id": row[0],
+            "chat_id": row[1],
+            "user_id": row[2],
+            "item_id": row[3],
+            "created_at": row[4],
+        }
+        for row in cursor.fetchall()
+    ]
 
 
 def remove_duel_inventory_instance(
@@ -826,37 +1272,49 @@ def transfer_duel_inventory_item(
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
-        cursor.execute(
-            """
-            SELECT item_id
-            FROM duel_inventory
-            WHERE id = ? AND chat_id = ? AND user_id = ?
-            """,
-            (inventory_instance_id, chat_id, from_user_id),
+        return transfer_duel_inventory_item_in_transaction(
+            cursor, chat_id, from_user_id, to_user_id, inventory_instance_id,
         )
-        row = cursor.fetchone()
-        if not row:
-            return False
 
-        item_id = row[0]
-        cursor.execute(
-            """
-            DELETE FROM duel_inventory
-            WHERE id = ? AND chat_id = ? AND user_id = ?
-            """,
-            (inventory_instance_id, chat_id, from_user_id),
-        )
-        if cursor.rowcount != 1:
-            return False
 
-        cursor.execute(
-            """
-            INSERT INTO duel_inventory (chat_id, user_id, item_id)
-            VALUES (?, ?, ?)
-            """,
-            (chat_id, to_user_id, item_id),
-        )
-        return True
+def transfer_duel_inventory_item_in_transaction(
+    cursor, chat_id: int, from_user_id: int, to_user_id: int,
+    inventory_instance_id: int,
+) -> bool:
+    if (is_deleted_user_in_transaction(cursor, from_user_id)
+            or is_deleted_user_in_transaction(cursor, to_user_id)):
+        return False
+    cursor.execute(
+        """
+        SELECT item_id
+        FROM duel_inventory
+        WHERE id = ? AND chat_id = ? AND user_id = ?
+        """,
+        (inventory_instance_id, chat_id, from_user_id),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return False
+
+    item_id = row[0]
+    cursor.execute(
+        """
+        DELETE FROM duel_inventory
+        WHERE id = ? AND chat_id = ? AND user_id = ?
+        """,
+        (inventory_instance_id, chat_id, from_user_id),
+    )
+    if cursor.rowcount != 1:
+        return False
+
+    cursor.execute(
+        """
+        INSERT INTO duel_inventory (chat_id, user_id, item_id)
+        VALUES (?, ?, ?)
+        """,
+        (chat_id, to_user_id, item_id),
+    )
+    return True
 
 
 def get_duel_item_event_chat_ids() -> list[int]:
@@ -887,38 +1345,47 @@ def create_duel_item_event_from_inventory(
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
-        cursor.execute(
-            """
-            SELECT item_id, created_at FROM duel_inventory
-            WHERE id = ? AND chat_id = ? AND user_id = ?
-            """,
-            (instance_id, chat_id, user_id),
+        return create_duel_item_event_from_inventory_in_transaction(
+            cursor, chat_id, user_id, instance_id,
         )
-        row = cursor.fetchone()
-        if not row or row[0] in ("oiled_vest", "knife"):
-            return None
 
-        cursor.execute(
-            "INSERT OR IGNORE INTO duel_item_events (chat_id, item_id) VALUES (?, ?)",
-            (chat_id, row[0]),
-        )
-        if cursor.rowcount != 1:
-            return None
-        event_id = cursor.lastrowid
-        cursor.execute(
-            "DELETE FROM duel_inventory WHERE id = ? AND chat_id = ? AND user_id = ?",
-            (instance_id, chat_id, user_id),
-        )
-        if cursor.rowcount != 1:
-            raise RuntimeError("Selected duel inventory instance disappeared")
-        return {
-            "event_id": event_id,
-            "chat_id": chat_id,
-            "user_id": user_id,
-            "instance_id": instance_id,
-            "item_id": row[0],
-            "created_at": row[1],
-        }
+
+def create_duel_item_event_from_inventory_in_transaction(
+    cursor, chat_id: int, user_id: int, instance_id: int,
+) -> dict | None:
+    cursor.execute(
+        """
+        SELECT item_id, created_at FROM duel_inventory
+        WHERE id = ? AND chat_id = ? AND user_id = ?
+        """,
+        (instance_id, chat_id, user_id),
+    )
+    row = cursor.fetchone()
+    if not row or row[0] in ("oiled_vest", "knife"):
+        return None
+
+    cursor.execute(
+        "INSERT OR IGNORE INTO duel_item_events (chat_id, item_id) VALUES (?, ?)",
+        (chat_id, row[0]),
+    )
+    if cursor.rowcount != 1:
+        return None
+    event_id = cursor.lastrowid
+    cursor.execute(
+        "DELETE FROM duel_inventory WHERE id = ? AND chat_id = ? AND user_id = ?",
+        (instance_id, chat_id, user_id),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError("Selected duel inventory instance disappeared")
+    return {
+        "event_id": event_id,
+        "chat_id": chat_id,
+        "user_id": user_id,
+        "instance_id": instance_id,
+        "item_id": row[0],
+        "created_at": row[1],
+        "profile_reset_at_ms": gnome_profile_reset_at_ms_in_transaction(cursor, user_id),
+    }
 
 
 def restore_unpublished_duel_drop(drop: dict, message_id: int | None = None) -> bool:
@@ -926,33 +1393,45 @@ def restore_unpublished_duel_drop(drop: dict, message_id: int | None = None) -> 
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
-        cursor.execute(
-            """
-            SELECT 1 FROM duel_item_events
-            WHERE event_id = ? AND chat_id = ? AND item_id = ?
-              AND claimed = 0 AND (message_id IS NULL OR message_id = ?)
-            """,
-            (drop["event_id"], drop["chat_id"], drop["item_id"], message_id),
-        )
-        if not cursor.fetchone():
-            return False
-        cursor.execute(
-            """
-            INSERT INTO duel_inventory (id, chat_id, user_id, item_id, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                drop["instance_id"], drop["chat_id"], drop["user_id"],
-                drop["item_id"], drop["created_at"],
-            ),
-        )
-        cursor.execute(
-            "DELETE FROM duel_item_events WHERE event_id = ?",
-            (drop["event_id"],),
-        )
-        if cursor.rowcount != 1:
-            raise RuntimeError("Unpublished duel drop disappeared during restoration")
-        return True
+        return restore_unpublished_duel_drop_in_transaction(cursor, drop, message_id)
+
+
+def restore_unpublished_duel_drop_in_transaction(
+    cursor, drop: dict, message_id: int | None = None,
+) -> bool:
+    if (is_deleted_user_in_transaction(cursor, drop["user_id"])
+            or gnome_profile_reset_at_ms_in_transaction(cursor, drop["user_id"])
+            != drop.get("profile_reset_at_ms", 0)):
+        cursor.execute("DELETE FROM duel_item_events WHERE event_id = ? AND claimed = 0",
+                       (drop["event_id"],))
+        return False
+    cursor.execute(
+        """
+        SELECT 1 FROM duel_item_events
+        WHERE event_id = ? AND chat_id = ? AND item_id = ?
+          AND claimed = 0 AND (message_id IS NULL OR message_id = ?)
+        """,
+        (drop["event_id"], drop["chat_id"], drop["item_id"], message_id),
+    )
+    if not cursor.fetchone():
+        return False
+    cursor.execute(
+        """
+        INSERT INTO duel_inventory (id, chat_id, user_id, item_id, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            drop["instance_id"], drop["chat_id"], drop["user_id"],
+            drop["item_id"], drop["created_at"],
+        ),
+    )
+    cursor.execute(
+        "DELETE FROM duel_item_events WHERE event_id = ?",
+        (drop["event_id"],),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError("Unpublished duel drop disappeared during restoration")
+    return True
 
 
 def get_duel_dig_attempts(chat_id: int, user_id: int, date_key: str | None = None) -> int:
@@ -968,11 +1447,43 @@ def get_duel_dig_attempts(chat_id: int, user_id: int, date_key: str | None = Non
     return row[0] if row else 0
 
 
+def _unpack_generated_item(picked) -> tuple[str, str | None]:
+    """A selector may return an id or a generated (id, name) pair."""
+    if isinstance(picked, tuple):
+        item_id, name = picked
+        return item_id, name
+    return picked, None
+
+
+def _remember_generated_item(cursor, item_id: str, name: str | None) -> None:
+    if not name:
+        return
+    cursor.execute(
+        """
+        INSERT INTO generated_item_names (item_id, name)
+        VALUES (?, ?)
+        ON CONFLICT(item_id) DO NOTHING
+        """,
+        (item_id, name),
+    )
+
+
+def get_generated_item_name(item_id: str) -> str | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT name FROM generated_item_names WHERE item_id = ?",
+            (item_id,),
+        ).fetchone()
+    return row[0] if row else None
+
+
 def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, dict | None]:
     """Pay for one dig, and optionally reserve its exact loot, in one transaction."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(cursor, user_id):
+            return "not_registered", None
         date_key = moscow_date_key()
         cursor.execute(
             """
@@ -1007,7 +1518,9 @@ def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, 
             return "insufficient_points", None
 
         found = roll() < DIG_FIND_CHANCE
-        item_id = item_selector() if found else None
+        item_id, generated_name = (None, None)
+        if found:
+            item_id, generated_name = _unpack_generated_item(item_selector())
         event_id = None
         if found:
             if item_id in ("oiled_vest", "knife"):
@@ -1019,6 +1532,7 @@ def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, 
             if cursor.rowcount != 1:
                 return "active_event", None
             event_id = cursor.lastrowid
+            _remember_generated_item(cursor, item_id, generated_name)
 
         cursor.execute(
             """
@@ -1044,6 +1558,7 @@ def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, 
         return ("found" if found else "miss"), {
             "chat_id": chat_id,
             "user_id": user_id,
+            "profile_reset_at_ms": gnome_profile_reset_at_ms_in_transaction(cursor, user_id),
             "date_key": date_key,
             "points": user[0] - 10,
             "remaining": 4 - attempts,
@@ -1062,6 +1577,14 @@ def cancel_unpublished_duel_dig(dig: dict, message_id: int | None = None) -> boo
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
+        if (is_deleted_user_in_transaction(cursor, dig["user_id"])
+                or gnome_profile_reset_at_ms_in_transaction(cursor, dig["user_id"])
+                != dig.get("profile_reset_at_ms", 0)):
+            cursor.execute(
+                "DELETE FROM duel_item_events WHERE event_id = ? AND claimed = 0",
+                (dig["event_id"],),
+            )
+            return False
         cursor.execute(
             """
             SELECT 1 FROM duel_item_events
@@ -1100,16 +1623,39 @@ def set_duel_item_event_message(
     event_id: int, message_id: int, origin_text: str | None = None,
 ) -> bool:
     with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            UPDATE duel_item_events
-            SET message_id = ?, published_at = ?, origin_text = ?
-            WHERE event_id = ? AND claimed = 0 AND message_id IS NULL
-            """,
-            (message_id, _utc_now().timestamp(), origin_text, event_id),
+        return set_duel_item_event_message_in_transaction(
+            conn.cursor(), event_id, message_id, origin_text,
         )
-        return cursor.rowcount == 1
+
+
+def set_duel_item_event_message_in_transaction(
+    cursor, event_id: int, message_id: int, origin_text: str | None = None,
+) -> bool:
+    cursor.execute(
+        """
+        UPDATE duel_item_events
+        SET message_id = ?, published_at = ?, origin_text = ?
+        WHERE event_id = ? AND claimed = 0 AND message_id IS NULL
+        """,
+        (message_id, _utc_now().timestamp(), origin_text, event_id),
+    )
+    return cursor.rowcount == 1
+
+
+def bind_duel_item_event_message_in_transaction(
+    cursor, chat_id: int, event_id: int, message_id: int,
+    published_at_ms: int, origin_text: str,
+) -> bool:
+    """Bind a persistent drop's pickup button within its chat and outbox ack."""
+    cursor.execute(
+        """
+        UPDATE duel_item_events
+        SET message_id = ?, published_at = ?, origin_text = ?
+        WHERE chat_id = ? AND event_id = ? AND claimed = 0 AND message_id IS NULL
+        """,
+        (message_id, published_at_ms / 1000, origin_text, chat_id, event_id),
+    )
+    return cursor.rowcount == 1
 
 
 def discard_unpublished_duel_item_event(event_id: int) -> bool:
@@ -1172,6 +1718,8 @@ def claim_duel_item_event(
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(cursor, user_id):
+            return "not_registered", None
         cursor.execute(
             """
             SELECT claimed, item_id, message_id
@@ -1218,7 +1766,7 @@ def _claim_item_in_transaction(
     cursor, event_id: int, chat_id: int, user_id: int,
     fixed_item_id: str | None, item_selector,
 ) -> dict | None:
-    """One CAS and inventory insert shared by manual pickup and Huecrab."""
+    """One item-event CAS and inventory transfer for manual and pet pickup."""
     cursor.execute(
         """
         UPDATE duel_item_events
@@ -1229,7 +1777,11 @@ def _claim_item_in_transaction(
     )
     if cursor.rowcount != 1:
         return None
-    item_id = fixed_item_id if fixed_item_id is not None else item_selector()
+    if fixed_item_id is not None:
+        item_id, generated_name = fixed_item_id, None
+    else:
+        item_id, generated_name = _unpack_generated_item(item_selector())
+    _remember_generated_item(cursor, item_id, generated_name)
     cursor.execute(
         "INSERT INTO duel_inventory (chat_id, user_id, item_id) VALUES (?, ?, ?)",
         (chat_id, user_id, item_id),
@@ -1249,44 +1801,37 @@ def _claim_item_in_transaction(
 
 def list_due_huecrab_item_events(now: float, delay_seconds: int) -> list[int]:
     with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT event_id FROM duel_item_events
-            WHERE claimed = 0 AND published_at IS NOT NULL
-              AND published_at <= ?
-            ORDER BY published_at, event_id
-            """,
+        return [row[0] for row in conn.execute(
+            """SELECT event_id FROM duel_item_events
+               WHERE claimed = 0 AND published_at IS NOT NULL AND published_at <= ?
+               ORDER BY published_at, event_id""",
             (now - delay_seconds,),
-        ).fetchall()
-    return [row[0] for row in rows]
+        )]
 
 
 def claim_due_item_for_huecrab(
     event_id: int, now: float, delay_seconds: int, item_selector, owner_selector,
 ) -> tuple[str, dict | None]:
-    """Choose an owner and claim under one write lock; Huegryz is never called."""
+    """Select a chat owner and claim under the same SQLite write lock as manual pickup."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
         row = cursor.execute(
-            """
-            SELECT chat_id, item_id, message_id, origin_text
-            FROM duel_item_events
-            WHERE event_id = ? AND claimed = 0 AND published_at IS NOT NULL
-              AND published_at <= ?
-            """,
+            """SELECT chat_id, item_id, message_id, origin_text
+               FROM duel_item_events WHERE event_id = ? AND claimed = 0
+               AND published_at IS NOT NULL AND published_at <= ?""",
             (event_id, now - delay_seconds),
         ).fetchone()
         if row is None or row[2] is None:
             return "unavailable", None
         chat_id, fixed_item_id, message_id, origin_text = row
         owners = cursor.execute(
-            """
-            SELECT u.user_id, u.username, u.display_name, u.dwarf_name
-            FROM huecrab_owners AS h
-            JOIN duel_users AS u ON u.chat_id = h.chat_id AND u.user_id = h.user_id
-            WHERE h.chat_id = ? ORDER BY u.user_id
-            """,
+            """SELECT u.user_id, u.username, u.display_name, u.dwarf_name
+               FROM huecrab_owners AS h JOIN duel_users AS u
+               ON u.chat_id = h.chat_id AND u.user_id = h.user_id
+               WHERE h.chat_id = ? AND NOT EXISTS
+                   (SELECT 1 FROM deleted_users AS d WHERE d.user_id = u.user_id)
+               ORDER BY u.user_id""",
             (chat_id,),
         ).fetchall()
         if not owners:
@@ -1303,15 +1848,131 @@ def claim_due_item_for_huecrab(
             (event_id,),
         )
         return "claimed", {
-            **instance,
-            "event_id": event_id,
-            "message_id": message_id,
+            **instance, "event_id": event_id, "message_id": message_id,
             "origin_text": origin_text,
             "owner": {
                 "user_id": user_id, "username": username,
                 "display_name": display_name, "dwarf_name": dwarf_name,
             },
         }
+
+
+def list_unannounced_huecrab_claims() -> list[dict]:
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT e.event_id, e.chat_id, e.message_id, e.item_id, e.origin_text,
+                      u.user_id, u.username, u.display_name, u.dwarf_name
+               FROM duel_item_events AS e JOIN duel_users AS u
+               ON u.chat_id = e.chat_id AND u.user_id = e.claimed_by
+               WHERE e.claimed = 1 AND e.autoloot_claimed = 1
+               AND e.autoloot_announced_at IS NULL ORDER BY e.event_id"""
+        ).fetchall()
+    return [
+        {
+            "event_id": r[0], "chat_id": r[1], "message_id": r[2],
+            "item_id": r[3], "origin_text": r[4],
+            "owner": {"user_id": r[5], "username": r[6],
+                      "display_name": r[7], "dwarf_name": r[8]},
+        }
+        for r in rows
+    ]
+
+
+def mark_huecrab_claim_announced(event_id: int) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """UPDATE duel_item_events SET autoloot_announced_at = CURRENT_TIMESTAMP
+               WHERE event_id = ? AND claimed = 1 AND autoloot_announced_at IS NULL""",
+            (event_id,),
+        )
+
+
+def has_huecrab(chat_id: int, user_id: int) -> bool:
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT 1 FROM huecrab_owners WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        ).fetchone() is not None
+
+
+def create_huecrab_event(chat_id: int) -> int | None:
+    with get_db() as conn:
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO huecrab_events (chat_id) VALUES (?)", (chat_id,),
+        )
+        return cursor.lastrowid if cursor.rowcount == 1 else None
+
+
+def has_active_huecrab_event(chat_id: int) -> bool:
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT 1 FROM huecrab_events WHERE chat_id = ? AND consumed = 0",
+            (chat_id,),
+        ).fetchone() is not None
+
+
+def bind_huecrab_event(event_id: int, message_id: int) -> bool:
+    with get_db() as conn:
+        cursor = conn.execute(
+            """UPDATE huecrab_events SET message_id = ?
+               WHERE event_id = ? AND consumed = 0 AND message_id IS NULL""",
+            (message_id, event_id),
+        )
+        return cursor.rowcount == 1
+
+
+def discard_unpublished_huecrab_event(event_id: int) -> bool:
+    with get_db() as conn:
+        cursor = conn.execute(
+            """DELETE FROM huecrab_events
+               WHERE event_id = ? AND consumed = 0 AND message_id IS NULL""",
+            (event_id,),
+        )
+        return cursor.rowcount == 1
+
+
+def tame_huecrab_event(
+    event_id: int, chat_id: int, user_id: int, message_id: int, tame_decider,
+) -> str:
+    """The first registered petless attempt consumes one wild event."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(cursor, user_id):
+            return "not_registered"
+        event = cursor.execute(
+            """SELECT consumed FROM huecrab_events
+               WHERE event_id = ? AND chat_id = ? AND message_id = ?""",
+            (event_id, chat_id, message_id),
+        ).fetchone()
+        if event is None or event[0]:
+            return "taken"
+        if cursor.execute(
+            "SELECT 1 FROM duel_users WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        ).fetchone() is None:
+            return "not_registered"
+        if cursor.execute(
+            "SELECT 1 FROM huecrab_owners WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        ).fetchone() is not None:
+            return "already_owned"
+        cursor.execute(
+            """UPDATE huecrab_events SET consumed = 1, attempted_by = ?
+               WHERE event_id = ? AND chat_id = ? AND consumed = 0""",
+            (user_id, event_id, chat_id),
+        )
+        if cursor.rowcount != 1:
+            return "taken"
+        if not tame_decider():
+            cursor.execute("UPDATE huecrab_events SET tamed = 0 WHERE event_id = ?", (event_id,))
+            return "failed"
+        cursor.execute(
+            "INSERT INTO huecrab_owners (chat_id, user_id) VALUES (?, ?)",
+            (chat_id, user_id),
+        )
+        cursor.execute("UPDATE huecrab_events SET tamed = 1 WHERE event_id = ?", (event_id,))
+        return "tamed"
 
 
 def list_unannounced_huecrab_claims() -> list[dict]:
@@ -1446,28 +2107,48 @@ def get_duel_top(
     chat_id: int, sort_by: str = "wins", limit: int = 10,
     include_dwarf_name: bool = False,
 ) -> list:
+    rows = get_duel_top_read_model(chat_id, sort_by=sort_by, limit=limit)
+    return [
+        (row["username"], row["display_name"], row["wins"], row["losses"],
+         row["points"], row["dwarf_name"])
+        if include_dwarf_name else
+        (row["username"], row["display_name"], row["wins"], row["losses"],
+         row["points"])
+        for row in rows
+    ]
+
+
+def get_duel_top_read_model(
+    chat_id: int, sort_by: str = "wins", limit: int = 10,
+) -> list[dict]:
+    """Canonical chat leaderboard rows for Telegram and Mini App presentation."""
     valid_cols = {"wins": "wins", "points": "points"}
     sort_column = valid_cols.get(sort_by, "wins")
 
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
-            SELECT username, display_name, wins, losses, points, dwarf_name
+            SELECT user_id, username, display_name, wins, losses, points,
+                   dwarf_name, gnome_variant
             FROM duel_users
-            WHERE chat_id = ?
+            WHERE chat_id = ? AND NOT EXISTS
+                (SELECT 1 FROM deleted_users AS d WHERE d.user_id = duel_users.user_id)
             ORDER BY {sort_column} DESC, wins DESC
             LIMIT ?
         """, (chat_id, limit))
         rows = cursor.fetchall()
-        
-        cleaned_rows = []
-        for u, d, w, l, p, dwarf_name in rows:
-            clean_u = _clean_username(u)
-            clean_d = _clean_username(d) or d
-            row = (clean_u, clean_d, w, l, p)
-            cleaned_rows.append(row + (dwarf_name,) if include_dwarf_name else row)
-            
-        return cleaned_rows
+
+        return [
+            {
+                "user_id": user_id,
+                "username": _clean_username(username),
+                "display_name": _clean_username(display_name) or display_name,
+                "wins": wins, "losses": losses, "points": points,
+                "dwarf_name": dwarf_name, "gnome_variant": gnome_variant,
+            }
+            for user_id, username, display_name, wins, losses, points,
+                dwarf_name, gnome_variant in rows
+        ]
 
 
 # ==========================================
@@ -1483,6 +2164,9 @@ def save_or_update_user(user, chat_id: int):
 
     with get_db() as conn:
         cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(cursor, user.id):
+            return
         cursor.execute("""
             INSERT INTO users (user_id, chat_id, username, first_name, beauty_count, is_bot)
             VALUES (?, ?, ?, ?, 0, 0)
@@ -1729,6 +2413,9 @@ def reward_boss_victory(user_id: int, chat_id: int) -> bool:
     """
     with get_db() as conn:
         cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        if is_deleted_user_in_transaction(cursor, user_id):
+            return False
 
         cursor.execute(
             """

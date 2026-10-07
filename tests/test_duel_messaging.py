@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -32,8 +33,21 @@ def test_schedule_auto_delete_uses_current_delay_and_skips_missing_queue(
     duel.schedule_auto_delete(fake_context, -55, [103])
 
 
-async def test_delete_messages_job_continues_after_delete_error():
+def test_cleanup_job_copies_message_ids_instead_of_sharing_mutable_list(fake_context):
+    from handlers.duel_messaging import schedule_auto_delete
+
+    message_ids = [1]
+    schedule_auto_delete(fake_context, -61, message_ids)
+    message_ids.append(2)
+    assert fake_context.job_queue.calls[0][2]["data"] == {
+        "chat_id": -61, "message_ids": [1],
+    }
+
+
+async def test_delete_messages_job_continues_after_delete_error(caplog):
     from handlers import duel
+
+    caplog.set_level(logging.INFO)
 
     deleted_ids = []
 
@@ -50,6 +64,30 @@ async def test_delete_messages_job_continues_after_delete_error():
     await duel.delete_messages_job(context)
 
     assert deleted_ids == [(-56, 1), (-56, 2), (-56, 3)]
+    assert "TEMP_MESSAGE_DELETE_OK chat_id=-56" in caplog.text
+    assert "TEMP_MESSAGE_DELETE_FAILED chat_id=-56" in caplog.text
+
+
+async def test_battle_delete_jobs_keep_identity_and_log_failures(fake_context, caplog):
+    from handlers.duel_messaging import delete_messages_job, schedule_auto_delete
+
+    caplog.set_level(logging.INFO)
+
+    schedule_auto_delete(fake_context, -90, [11, 12], battle_id="battle-a", round_num=2)
+    callback, delay, kwargs = fake_context.job_queue.calls[0]
+    assert callback is delete_messages_job
+    assert delay == 60
+    assert kwargs["data"] == {
+        "chat_id": -90, "message_ids": [11, 12],
+        "battle_id": "battle-a", "round": 2,
+    }
+    assert "BATTLE_MESSAGE_DELETE_SCHEDULED chat_id=-90 battle_id=battle-a round=2 message_id=11" in caplog.text
+    fake_context.bot.delete_message.side_effect = [RuntimeError("gone"), True]
+    fake_context.job.data = kwargs["data"]
+    await callback(fake_context)
+    assert fake_context.bot.delete_message.await_count == 2
+    assert "BATTLE_MESSAGE_DELETE_FAILED chat_id=-90 battle_id=battle-a round=2 message_id=11" in caplog.text
+    assert "BATTLE_MESSAGE_DELETE_OK chat_id=-90 battle_id=battle-a round=2 message_id=12" in caplog.text
 
 
 async def test_send_and_schedule_replies_and_schedules_both_messages(fake_context):

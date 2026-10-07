@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, call
+from unittest.mock import ANY, AsyncMock, Mock, call
 
 import pytest
 
@@ -335,6 +335,7 @@ async def test_boss_send_final_report_edits_one_chunk_at_3900_boundary(
         message_id=501,
         text=text,
         parse_mode="HTML",
+        reply_markup=ANY,
     )
     fake_context.bot.send_message.assert_not_awaited()
 
@@ -360,10 +361,11 @@ async def test_boss_send_final_report_splits_3901_chars_and_falls_back_from_edit
         message_id=502,
         text="б" * 3900,
         parse_mode="HTML",
+        reply_markup=None,
     )
     assert fake_context.bot.send_message.await_args_list == [
-        call(chat_id=-502, text="б" * 3900, parse_mode="HTML"),
-        call(chat_id=-502, text="б", parse_mode="HTML"),
+        call(chat_id=-502, text="б" * 3900, parse_mode="HTML", reply_markup=None),
+        call(chat_id=-502, text="б", parse_mode="HTML", reply_markup=ANY),
     ]
 
 
@@ -392,5 +394,6 @@ async def test_boss_send_final_report_uses_current_report_build_fallback(
             "Летописец посмотрел на произошедшее, охуел и отказался это записывать."
         ),
         parse_mode="HTML",
+        reply_markup=ANY,
     )
     fake_context.bot.send_message.assert_not_awaited()

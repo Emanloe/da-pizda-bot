@@ -9,12 +9,14 @@ def test_hyperborean_yaml_loads_utf8_text_with_html_emoji_and_multiline():
     text = text_resources.get_text(
         "hyperborean.other.exploded.hyperboreic",
         title="Гном Вася",
+        points=73,
     )
 
     assert "Гном Вася" in text
     assert "🍆" in text
     assert "💀" in text
     assert "<b>Гном Вася</b>" in text
+    assert "Очки: <b>73 / 100</b>" in text
     assert "\n\nУ гнома уже не было хуя" in text
 
 

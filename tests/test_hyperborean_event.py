@@ -179,6 +179,19 @@ def _get_dick_state(db_path, chat_id, user_id):
         ).fetchone()
 
 
+def _get_target_state(db_path, chat_id, user_id):
+    with sqlite3.connect(db_path) as conn:
+        user = conn.execute(
+            "SELECT * FROM duel_users WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        ).fetchone()
+        inventory = conn.execute(
+            "SELECT * FROM duel_inventory WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        ).fetchall()
+    return user, inventory
+
+
 def test_other_claim_uses_only_current_chat_and_explodes_selected_user(monkeypatch, temp_database, tg_user):
     from database import get_or_create_duel_user
     from handlers import hyperborean_event as event
@@ -195,7 +208,7 @@ def test_other_claim_uses_only_current_chat_and_explodes_selected_user(monkeypat
     result, selected, had_no_dick = event._claim_hyperboreic_huy_for_other(-99, tg_user)
 
     assert (result, selected["user_id"], had_no_dick) == ("exploded", same_chat_user.id, True)
-    assert _get_dick_state(temp_database, -99, same_chat_user.id) == (0, 1)
+    assert _get_dick_state(temp_database, -99, same_chat_user.id) == (73, 1)
     assert _get_dick_state(temp_database, -100, other_chat_user.id) == (66, 1)
 
 
@@ -213,13 +226,20 @@ def test_other_claim_can_select_clicking_user(monkeypatch, temp_database, tg_use
 
 
 def test_other_claim_leaves_user_with_dick_unchanged_and_rolls_once(monkeypatch, temp_database, tg_user):
+    from database import get_or_create_duel_user
     from handlers import hyperborean_event as event
 
     monkeypatch.setattr(event, "_HYPERBOREAN_DB_PATH", temp_database)
+    get_or_create_duel_user(tg_user, -99)
+    dickless_user = _duel_user(2003, "dickless")
+    get_or_create_duel_user(dickless_user, -99)
+    _set_dick_state(temp_database, -99, dickless_user.id, points=73, dick_stolen_today=1)
+    before = _get_target_state(temp_database, -99, tg_user.id)
     calls = []
 
     def choose_once(users):
         calls.append(users)
+        assert {user[0] for user in users} == {tg_user.id, dickless_user.id}
         return next(user for user in users if user[0] == tg_user.id)
 
     monkeypatch.setattr(event.random, "choice", choose_once)
@@ -227,10 +247,36 @@ def test_other_claim_leaves_user_with_dick_unchanged_and_rolls_once(monkeypatch,
 
     assert (result, selected["user_id"], had_no_dick) == ("unchanged", tg_user.id, False)
     assert _get_dick_state(temp_database, -99, tg_user.id) == (20, 0)
+    assert _get_target_state(temp_database, -99, tg_user.id) == before
+    assert _get_dick_state(temp_database, -99, dickless_user.id) == (73, 1)
     assert len(calls) == 1
 
 
-async def test_callback_restores_event_state_after_claim_error(monkeypatch, fake_context, tg_user):
+@pytest.mark.parametrize("points", [73, 0])
+def test_other_dickless_target_keeps_exact_points(monkeypatch, temp_database, tg_user, points):
+    from database import get_or_create_duel_user
+    from handlers import hyperborean_event as event
+
+    monkeypatch.setattr(event, "_HYPERBOREAN_DB_PATH", temp_database)
+    get_or_create_duel_user(tg_user, -99)
+    _set_dick_state(temp_database, -99, tg_user.id, points=points, dick_stolen_today=1)
+    before = _get_target_state(temp_database, -99, tg_user.id)
+    calls = []
+
+    def choose_once(users):
+        calls.append(users)
+        return users[0]
+
+    monkeypatch.setattr(event.random, "choice", choose_once)
+    result, selected, had_no_dick = event._claim_hyperboreic_huy_for_other(-99, tg_user)
+
+    assert (result, selected["points"], had_no_dick) == ("exploded", points, True)
+    assert _get_dick_state(temp_database, -99, tg_user.id) == (points, 1)
+    assert _get_target_state(temp_database, -99, tg_user.id) == before
+    assert len(calls) == 1
+
+
+async def test_callback_restores_event_state_after_claim_error(monkeypatch, temp_database, fake_context, tg_user):
     from handlers import hyperborean_event as event
 
     event.ACTIVE_HYPERBOREAN_EVENTS.clear()
@@ -246,7 +292,7 @@ async def test_callback_restores_event_state_after_claim_error(monkeypatch, fake
 
 
 @pytest.mark.parametrize("event_type", ["hyperboreic", "arthur"])
-async def test_other_callback_consumes_event_once(monkeypatch, fake_context, tg_user, event_type):
+async def test_other_callback_consumes_event_once(monkeypatch, temp_database, fake_context, tg_user, event_type):
     from handlers import hyperborean_event as event
 
     event.ACTIVE_HYPERBOREAN_EVENTS.clear()
@@ -270,3 +316,58 @@ async def test_other_callback_consumes_event_once(monkeypatch, fake_context, tg_
         chat_id=-1, message_id=77, reply_markup=None
     )
     assert event.ACTIVE_HYPERBOREAN_EVENTS == {}
+
+
+@pytest.mark.parametrize("event_type", ["hyperboreic", "arthur"])
+@pytest.mark.parametrize("dick_stolen_today", [0, 1])
+async def test_other_callback_uses_yaml_for_selected_target(
+    monkeypatch, temp_database, fake_context, tg_user, event_type, dick_stolen_today
+):
+    from database import format_user_title, get_or_create_duel_user
+    from handlers import hyperborean_event as event
+    from text_resources import get_text
+
+    monkeypatch.setattr(event, "_HYPERBOREAN_DB_PATH", temp_database)
+    get_or_create_duel_user(tg_user, -99)
+    _set_dick_state(temp_database, -99, tg_user.id, points=73, dick_stolen_today=dick_stolen_today)
+    monkeypatch.setattr(event.random, "choice", lambda users: users[0])
+    event.ACTIVE_HYPERBOREAN_EVENTS.clear()
+    event.ACTIVE_HYPERBOREAN_EVENTS[-99] = {"message_id": 77, "event_type": event_type}
+    fake_context.bot.edit_message_reply_markup = AsyncMock()
+    query = SimpleNamespace(data="hyperboreic_huy_other", from_user=tg_user, answer=AsyncMock())
+    update = SimpleNamespace(callback_query=query, effective_chat=SimpleNamespace(id=-99))
+
+    await event.hyperboreic_huy_callback(update, fake_context)
+
+    title = format_user_title(get_or_create_duel_user(tg_user, -99))
+    result_key = "exploded" if dick_stolen_today else "unchanged"
+    expected = get_text(
+        f"hyperborean.other.{result_key}.{event_type}", title=title, points=73
+    )
+    assert fake_context.bot.send_message.await_args.kwargs["text"] == expected
+    assert _get_dick_state(temp_database, -99, tg_user.id) == (73, dick_stolen_today)
+    if event_type == "hyperboreic" and not dick_stolen_today:
+        assert "дерзким парированием отбил гиперборейский хуй" in expected
+
+
+@pytest.mark.parametrize("event_type", ["hyperboreic", "arthur"])
+@pytest.mark.parametrize("dick_stolen_today, expected_points, expected_dick", [(1, 73, 0), (0, 0, 1)])
+async def test_self_callback_preserves_existing_semantics(
+    monkeypatch, temp_database, fake_context, tg_user,
+    event_type, dick_stolen_today, expected_points, expected_dick,
+):
+    from database import get_or_create_duel_user
+    from handlers import hyperborean_event as event
+
+    monkeypatch.setattr(event, "_HYPERBOREAN_DB_PATH", temp_database)
+    get_or_create_duel_user(tg_user, -99)
+    _set_dick_state(temp_database, -99, tg_user.id, points=73, dick_stolen_today=dick_stolen_today)
+    event.ACTIVE_HYPERBOREAN_EVENTS.clear()
+    event.ACTIVE_HYPERBOREAN_EVENTS[-99] = {"message_id": 77, "event_type": event_type}
+    fake_context.bot.edit_message_reply_markup = AsyncMock()
+    query = SimpleNamespace(data="hyperboreic_huy_self", from_user=tg_user, answer=AsyncMock())
+    update = SimpleNamespace(callback_query=query, effective_chat=SimpleNamespace(id=-99))
+
+    await event.hyperboreic_huy_callback(update, fake_context)
+
+    assert _get_dick_state(temp_database, -99, tg_user.id) == (expected_points, expected_dick)

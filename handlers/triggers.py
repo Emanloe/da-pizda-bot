@@ -19,6 +19,7 @@ from database import (
 )
 from handlers.past_pizda import match_yes_no, remember_pizda_candidate
 from text_resources import get_text
+from module_settings import is_module_enabled
 
 _LET_DO_PHRASES_PATH = Path(__file__).resolve().parent.parent / "data" / "let_do_phrases.json"
 
@@ -126,12 +127,13 @@ async def respond_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
+    reactions_enabled = is_module_enabled(chat_id, "chat_reactions")
     now = datetime.now()
     last_responded = context.user_data.get(user_id)
 
     # Реакция на пересланные сообщения
     # Проверяем тумблер из БД
-    if update.message.forward_origin is not None and is_forward_reply_enabled(chat_id):
+    if reactions_enabled and update.message.forward_origin is not None and is_forward_reply_enabled(chat_id):
         if random.random() < 0.3:
             await update.message.reply_text(
                 get_text("triggers.responses.forwarded"),
@@ -168,7 +170,7 @@ async def respond_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except (ValueError, IndexError):
                 pass
 
-    if is_bday_today:
+    if is_bday_today and is_module_enabled(chat_id, "birthday_greetings"):
         congrat_key = f"bday_{now.year}"
 
         if not context.user_data.get(congrat_key):
@@ -185,9 +187,13 @@ async def respond_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text(text)
 
+    reactions_enabled = is_module_enabled(chat_id, "chat_reactions")
+    past_pizda_enabled = is_module_enabled(chat_id, "past_pizda")
+
     # Реакция на фразы let_do
     if (
-        any(phrase in text_raw.lower() for phrase in LET_DO_PHRASES)
+        reactions_enabled
+        and any(phrase in text_raw.lower() for phrase in LET_DO_PHRASES)
         and random.random() < 0.05
     ):
         if LET_DO_STICKER_IDS:
@@ -197,7 +203,7 @@ async def respond_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     # Реакция на "трясущиеся" слова
-    if SHAKING_GIF_ID and SHAKING_RE.search(text_raw):
+    if reactions_enabled and SHAKING_GIF_ID and SHAKING_RE.search(text_raw):
         if random.random() < 0.05:
             await update.message.reply_animation(
                 animation=SHAKING_GIF_ID,
@@ -206,7 +212,7 @@ async def respond_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     yes_no = match_yes_no(text_raw)
 
-    if yes_no == "да":
+    if past_pizda_enabled and yes_no == "да":
         remember_pizda_candidate(
             chat_id,
             update.message.message_id,
@@ -216,6 +222,8 @@ async def respond_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Ответы "Да/Нет" и троллинг Amigo
     response_chance = 0.09
 
+    if not reactions_enabled and not past_pizda_enabled:
+        return
     roll = random.random()
 
     logger.info(
@@ -229,7 +237,7 @@ async def respond_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if last_responded is None or roll < response_chance:
-        if yes_no == "да":
+        if past_pizda_enabled and yes_no == "да":
             await update.message.reply_text(
                 get_text("past_pizda.messages.reply"),
                 reply_to_message_id=update.message.message_id,
@@ -240,7 +248,7 @@ async def respond_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update.message.message_id,
             )
 
-        elif yes_no == "нет":
+        elif reactions_enabled and yes_no == "нет":
             await update.message.reply_text(
                 get_text("triggers.responses.no"),
                 reply_to_message_id=update.message.message_id,
@@ -250,7 +258,7 @@ async def respond_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.from_user.first_name or ""
         ).lower()
 
-        if user_first_name == "amigo":
+        if reactions_enabled and is_module_enabled(chat_id, "chat_reactions") and user_first_name == "amigo":
             if random.random() < 0.3:
                 await update.message.reply_text(
                     get_text("triggers.responses.amigo"),

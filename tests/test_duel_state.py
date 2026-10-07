@@ -141,29 +141,21 @@ def test_build_duel_result_plan_with_steal():
     }
 
 
-def test_build_duel_result_plan_floors_zero_and_low_positive_losers():
-    for starting_points in (0, 1, 4):
+def test_build_duel_result_plan_never_writes_negative_points():
+    for loser_points in (0, 1, 4):
         plan = _build_duel_result_plan(
             {"user_id": 1, "points": 0},
-            {"user_id": 2, "points": starting_points},
-            starting_points == 0,
-            "Winner",
-            100,
+            {"user_id": 2, "points": loser_points},
+            loser_points == 0, "Winner", 100,
         )
         assert plan["winner"]["points"] == 10
         assert plan["loser"]["points"] == 0
-
-
-def test_build_duel_result_plan_never_writes_negative_points_from_legacy_data():
-    plan = _build_duel_result_plan(
+    legacy = _build_duel_result_plan(
         {"user_id": 1, "points": -20},
         {"user_id": 2, "points": -1},
-        False,
-        "Winner",
-        100,
+        False, "Winner", 100,
     )
-    assert plan["winner"]["points"] == 0
-    assert plan["loser"]["points"] == 0
+    assert legacy["winner"]["points"] == legacy["loser"]["points"] == 0
 
 
 def test_build_duel_result_plan_does_not_mutate_snapshots():

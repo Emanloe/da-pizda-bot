@@ -33,7 +33,7 @@ def test_bot_public_import_contracts():
         "toggle_autodelete_command", "daily_beauty_job", "schedule_past_pizda_job",
         "respond_trigger", "get_file_id_handler", "error_handler", "weather_inline_query",
         "weather_chosen_inline_result", "weather_stub_callback", "duel_command",
-        "duel_select_callback", "duel_action_callback", "duel_stats_command",
+        "duel_select_callback", "duel_action_callback", "duel_stats_command", "inspect_command",
         "duel_top_command", "duel_delete_command", "gnomed_command", "boss_daily_job", "boss_callback",
         "boss_command", "boss_reg_command", "hyperboreic_huy_daily_job",
         "hyperboreic_huy_callback",
@@ -53,8 +53,13 @@ def test_bot_suppresses_http_client_info_logs():
 def test_bot_command_menu_preserves_descriptions_and_order():
     import bot
 
-    assert [(command.command, command.description) for command in bot.BOT_COMMANDS] == [
+    assert ("duel_app", "Дуэли: мини-приложение") in [
+        (command.command, command.description) for command in bot.BOT_COMMANDS
+    ]
+    assert [(command.command, command.description) for command in bot.BOT_COMMANDS
+            if command.command not in {"duel_app", "modules"}] == [
         ("start", "Запустить бота"),
+        ("dickpukku", "Покинуть гномью игру"),
         ("help", "Хелп по командам"),
         ("donate", "Поддержать проект"),
         ("top", "Топ пидоров"),
@@ -68,6 +73,7 @@ def test_bot_command_menu_preserves_descriptions_and_order():
         ("dig", "Копать за 10 очков"),
         ("ball", "Активировать элитный мячик"),
         ("duel_stats", "Статистика дуэлей"),
+        ("inspect", "Осмотреть игрока"),
         ("duel_top", "Топ дуэлянтов"),
         ("duel_delete", "Удалить игрока дуэлей"),
         ("boss", "Запустить босса"),
@@ -107,7 +113,7 @@ async def test_donate_and_gnomed_command_handlers_are_registered_once(monkeypatc
         def build(self):
             return self.application
 
-    monkeypatch.setattr(bot.nest_asyncio, "apply", lambda: None)
+    monkeypatch.setattr(bot, "run_ptb_and_http", AsyncMock())
     monkeypatch.setattr(bot, "init_db", lambda: None)
     monkeypatch.setattr(bot.Application, "builder", lambda: FakeBuilder())
 
@@ -116,6 +122,7 @@ async def test_donate_and_gnomed_command_handlers_are_registered_once(monkeypatc
     for callback, command in (
         (bot.donate_command, "donate"),
         (bot.gnomed_command, "gnomed"),
+        (bot.duel_app_command, "duel_app"),
         (bot.name_command, "name"),
         (bot.summary_command, "summary"),
         (bot.dig_command, "dig"),
@@ -187,7 +194,7 @@ async def test_registered_duel_stats_handler_sends_virtual_base_inventory(
         def build(self):
             return FakeApplication()
 
-    monkeypatch.setattr(bot.nest_asyncio, "apply", lambda: None)
+    monkeypatch.setattr(bot, "run_ptb_and_http", AsyncMock())
     monkeypatch.setattr(bot, "init_db", lambda: None)
     monkeypatch.setattr(bot.Application, "builder", lambda: FakeBuilder())
     await bot.main()
@@ -245,9 +252,10 @@ def test_callback_handler_patterns_are_stable():
         "duel_strike_head_1": r"^duel_(strike|block)_",
         "duel_block_dick_99": r"^duel_(strike|block)_",
         "duel_item_claim_123": r"^duel_item_claim_\d+$",
-        "boss_join": r"^boss_(join|attack_|block_)",
-        "boss_attack_body_3": r"^boss_(join|attack_|block_)",
-        "boss_block_dick_3": r"^boss_(join|attack_|block_)",
+        "boss_join": r"^boss_(join$|reg_next$|attack_|block_)",
+        "boss_reg_next": r"^boss_(join$|reg_next$|attack_|block_)",
+        "boss_attack_body_3": r"^boss_(join$|reg_next$|attack_|block_)",
+        "boss_block_dick_3": r"^boss_(join$|reg_next$|attack_|block_)",
         "hyperboreic_huy": r"^hyperboreic_huy(?:_(?:self|other))?$",
         "hyperboreic_huy_self": r"^hyperboreic_huy(?:_(?:self|other))?$",
         "hyperboreic_huy_other": r"^hyperboreic_huy(?:_(?:self|other))?$",
@@ -297,7 +305,7 @@ async def test_boss_daily_job_is_scheduled_at_1337_moscow(monkeypatch):
         def build(self):
             return FakeApplication()
 
-    monkeypatch.setattr(bot.nest_asyncio, "apply", lambda: None)
+    monkeypatch.setattr(bot, "run_ptb_and_http", AsyncMock())
     monkeypatch.setattr(bot, "init_db", lambda: None)
     monkeypatch.setattr(bot.Application, "builder", lambda: FakeBuilder())
     monkeypatch.setattr(bot, "schedule_past_pizda_job", lambda _queue: None)
@@ -362,7 +370,7 @@ async def test_duel_item_periodic_job_registration_is_named_and_not_duplicated(
         def build(self):
             return FakeApplication()
 
-    monkeypatch.setattr(bot.nest_asyncio, "apply", lambda: None)
+    monkeypatch.setattr(bot, "run_ptb_and_http", AsyncMock())
     monkeypatch.setattr(bot, "init_db", lambda: None)
     monkeypatch.setattr(bot.Application, "builder", lambda: FakeBuilder())
     monkeypatch.setattr(bot, "schedule_past_pizda_job", lambda _queue: None)
@@ -376,6 +384,20 @@ async def test_duel_item_periodic_job_registration_is_named_and_not_duplicated(
             "first": 120,
             "name": "duel_item_event_job",
         }
+    assert [entry for entry in repeating if entry[0] is bot.huecrab_event_job] == [
+        (bot.huecrab_event_job, {
+            "interval": bot.HUECRAB_CHECK_MINUTES * 60,
+            "first": 180,
+            "name": "huecrab_event_job",
+        })
+    ]
+    assert [entry for entry in repeating if entry[0] is bot.huecrab_autoloot_job] == [
+        (bot.huecrab_autoloot_job, {
+            "interval": 5,
+            "first": 5,
+            "name": "huecrab_autoloot_job",
+        })
+    ]
 
 
 @pytest.mark.asyncio
@@ -407,7 +429,7 @@ async def test_duel_item_callback_handler_is_registered(monkeypatch):
         def build(self):
             return FakeApplication()
 
-    monkeypatch.setattr(bot.nest_asyncio, "apply", lambda: None)
+    monkeypatch.setattr(bot, "run_ptb_and_http", AsyncMock())
     monkeypatch.setattr(bot, "init_db", lambda: None)
     monkeypatch.setattr(bot.Application, "builder", lambda: FakeBuilder())
     await bot.main()
@@ -419,6 +441,12 @@ async def test_duel_item_callback_handler_is_registered(monkeypatch):
         and handler.callback is bot.duel_item_event_callback
     )
     assert item_handler.pattern.pattern == r"^duel_item_claim_\d+$"
+    pet_handler = next(
+        handler for handler in handlers
+        if isinstance(handler, CallbackQueryHandler)
+        and handler.callback is bot.huecrab_tame_callback
+    )
+    assert pet_handler.pattern.pattern == r"^huecrab_tame_\d+$"
 
 
 @pytest.mark.asyncio
@@ -454,7 +482,7 @@ async def test_registered_hyperborean_callback_handler_routes_all_supported_payl
         def build(self):
             return self.application
 
-    monkeypatch.setattr(bot.nest_asyncio, "apply", lambda: None)
+    monkeypatch.setattr(bot, "run_ptb_and_http", AsyncMock())
     monkeypatch.setattr(bot, "init_db", lambda: None)
     monkeypatch.setattr(bot.Application, "builder", lambda: FakeBuilder())
 
@@ -493,3 +521,13 @@ async def test_registered_hyperborean_callback_handler_routes_all_supported_payl
 
     assert not handler.check_update(update_with("hyperboreic_huy_unknown"))
     assert not handler.check_update(update_with("duel_strike_head_1"))
+
+    moss_handlers = [
+        item for item in registered_handlers
+        if isinstance(item, CallbackQueryHandler)
+        and item.callback is bot.moss_choice_callback
+    ]
+    assert len(moss_handlers) == 1
+    assert moss_handlers[0].check_update(update_with("moss_choice:17:wise"))
+    assert moss_handlers[0].check_update(update_with("moss_choice:17:clever"))
+    assert not handler.check_update(update_with("moss_choice:17:wise"))

@@ -40,13 +40,13 @@ async def test_duel_list_denies_no_dick_at_zero_before_selection_or_rng(
     temp_database, fake_context, monkeypatch,
 ):
     import database
-    from handlers import duel
+    from handlers import duel, duel_service
     from text_resources import get_text
 
     initiator = _user(1, "initiator")
     database.get_or_create_duel_user(initiator, CHAT_ID)
     _set_points(temp_database, 1, 0, no_dick=True)
-    monkeypatch.setattr(duel, "get_duel_top", Mock(side_effect=AssertionError("opened selection")))
+    monkeypatch.setattr(duel_service, "get_duel_top", Mock(side_effect=AssertionError("opened selection")))
     monkeypatch.setattr(duel.random, "choice", Mock(side_effect=AssertionError("used RNG")))
     update = _duel_update(initiator)
 
@@ -61,7 +61,8 @@ async def test_old_selection_button_rechecks_current_db_and_allows_zero_points(
     temp_database, fake_context, monkeypatch,
 ):
     import database
-    from handlers import duel
+    from duel_session_repository import get_current_duel_session
+    from handlers import duel, duel_service
 
     initiator, opponent = _user(1, "initiator"), _user(2, "opponent")
     database.get_or_create_duel_user(initiator, CHAT_ID)
@@ -73,9 +74,9 @@ async def test_old_selection_button_rechecks_current_db_and_allows_zero_points(
 
     _set_points(temp_database, 1, 0)
     rng = Mock(return_value=True)
-    start_fight = AsyncMock()
-    monkeypatch.setattr(duel.random, "choice", rng)
-    monkeypatch.setattr(duel, "_start_interactive_fight", start_fight)
+    monkeypatch.setattr(duel_service.random, "choice", rng)
+    monkeypatch.setattr(duel_service.random, "random",
+                        Mock(side_effect=AssertionError("start used random.random")))
     query = SimpleNamespace(
         data="start_duel_opponent", from_user=initiator,
         answer=AsyncMock(), message=SimpleNamespace(delete=AsyncMock()),
@@ -86,11 +87,11 @@ async def test_old_selection_button_rechecks_current_db_and_allows_zero_points(
     await duel.duel_select_callback(callback, fake_context)
 
     query.answer.assert_awaited_once()
-    start_fight.assert_awaited_once()
-    assert start_fight.await_args.kwargs["attacker_data"]["points"] == 0
+    session = get_current_duel_session(CHAT_ID)
+    assert session["player1_snapshot"]["points"] == 0
     rng.assert_called_once_with([True, False])
     assert CHAT_ID not in duel.ACTIVE_DUELS
-    fake_context.bot.send_message.assert_not_awaited()
+    fake_context.bot.send_message.assert_awaited_once()
 
 
 @pytest.mark.asyncio

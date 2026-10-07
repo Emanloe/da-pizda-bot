@@ -4,6 +4,11 @@ from unittest.mock import Mock
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def initialized_guard_schema(temp_database):
+    """Exercise boss loot against the initialized production schema."""
+
+
 def participant(user_id, *, alive=True, title=None):
     return {
         "tg_user": SimpleNamespace(id=user_id),

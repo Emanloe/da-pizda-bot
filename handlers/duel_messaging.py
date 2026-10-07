@@ -1,3 +1,5 @@
+import logging
+
 from telegram import Update, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
@@ -9,6 +11,9 @@ async def delete_messages_job(context: ContextTypes.DEFAULT_TYPE):
     job_data = context.job.data
     chat_id = job_data.get("chat_id")
     message_ids = job_data.get("message_ids", [])
+    battle_id = job_data.get("battle_id")
+    round_num = job_data.get("round")
+    prefix = "BATTLE_MESSAGE" if battle_id is not None else "TEMP_MESSAGE"
 
     for msg_id in message_ids:
         try:
@@ -16,8 +21,15 @@ async def delete_messages_job(context: ContextTypes.DEFAULT_TYPE):
                 chat_id=chat_id,
                 message_id=msg_id,
             )
+            logging.info(
+                "%s_DELETE_OK chat_id=%s battle_id=%s round=%s message_id=%s",
+                prefix, chat_id, battle_id, round_num, msg_id,
+            )
         except Exception:
-            pass
+            logging.exception(
+                "%s_DELETE_FAILED chat_id=%s battle_id=%s round=%s message_id=%s",
+                prefix, chat_id, battle_id, round_num, msg_id,
+            )
 
 
 def schedule_auto_delete(
@@ -25,15 +37,29 @@ def schedule_auto_delete(
     chat_id: int,
     message_ids: list[int],
     delay: int = AUTO_DELETE_DELAY,
+    *,
+    battle_id: str | None = None,
+    round_num: int | None = None,
 ):
+    prefix = "BATTLE_MESSAGE" if battle_id is not None else "TEMP_MESSAGE"
     if context.job_queue:
+        data = {"chat_id": chat_id, "message_ids": list(message_ids)}
+        if battle_id is not None:
+            data.update({"battle_id": battle_id, "round": round_num})
         context.job_queue.run_once(
             delete_messages_job,
             when=delay,
-            data={
-                "chat_id": chat_id,
-                "message_ids": message_ids,
-            },
+            data=data,
+        )
+        for message_id in message_ids:
+            logging.info(
+                "%s_DELETE_SCHEDULED chat_id=%s battle_id=%s round=%s message_id=%s delay=%s",
+                prefix, chat_id, battle_id, round_num, message_id, delay,
+            )
+    else:
+        logging.warning(
+            "%s_DELETE_UNAVAILABLE chat_id=%s battle_id=%s round=%s message_ids=%s",
+            prefix, chat_id, battle_id, round_num, list(message_ids),
         )
 
 

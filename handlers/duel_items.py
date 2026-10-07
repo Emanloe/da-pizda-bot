@@ -20,8 +20,14 @@ from database import (
     get_duel_dwarf_name,
     get_duel_item_event,
     get_duel_item_event_chat_ids,
+    get_generated_item_name,
     set_duel_item_event_message,
 )
+from duel_outbox_repository import get_delivered_pocket_drop_for_event
+from duel_session_repository import get_duel_session
+from handlers.duel_messaging import schedule_auto_delete
+from loot.generate import generate
+from module_settings import is_module_enabled
 from text_resources import get_text, get_text_list, get_text_mapping
 
 
@@ -81,12 +87,26 @@ DUEL_ITEM_NAMES = {
 _DUEL_ITEM_ORDER = {item["id"]: index for index, item in enumerate(DUEL_ITEMS)}
 
 
+def roll_generated_item() -> tuple[str, str]:
+    """One generated loot name. Retries if the latin id belongs to a unique."""
+    for _ in range(8):
+        item = generate(random)
+        if item["item_id"] not in DUEL_ITEM_NAMES:
+            return item["item_id"], item["name"]
+    raise RuntimeError("Generated loot id collided with a reserved item")
+
+
 def get_duel_item_name(item_id: str) -> str:
-    return DUEL_ITEM_NAMES.get(item_id, get_text("duel.inventory.unknown_item"))
+    if item_id in DUEL_ITEM_NAMES:
+        return DUEL_ITEM_NAMES[item_id]
+    generated = get_generated_item_name(item_id)
+    if generated:
+        return generated
+    return get_text("duel.inventory.unknown_item")
 
 
-def format_duel_display_inventory(collectible_instances: list[dict]) -> str:
-    """Format permanent base items followed by stored collectible instances."""
+def get_duel_display_inventory_rows(collectible_instances: list[dict]) -> list[dict]:
+    """Permanent base items and grouped collectibles, without changing storage."""
     counts = Counter(
         instance["item_id"]
         for instance in collectible_instances
@@ -99,10 +119,22 @@ def format_duel_display_inventory(collectible_instances: list[dict]) -> str:
             item_id,
         ),
     )
-    formatted = [escape(item["name"]) for item in BASE_DUEL_ITEMS]
-    for item_id in item_ids:
-        name = escape(get_duel_item_name(item_id))
-        count = counts[item_id]
+    return [
+        {"item_id": item["id"], "name": item["name"], "count": 1}
+        for item in BASE_DUEL_ITEMS
+    ] + [
+        {"item_id": item_id, "name": DUEL_ITEM_NAMES.get(item_id, item_id),
+         "count": counts[item_id]}
+        for item_id in item_ids
+    ]
+
+
+def format_duel_display_inventory(collectible_instances: list[dict]) -> str:
+    """Format permanent base items followed by stored collectible instances."""
+    formatted = []
+    for item in get_duel_display_inventory_rows(collectible_instances):
+        name = escape(get_duel_item_name(item["item_id"]))
+        count = item["count"]
         formatted.append(
             get_text("duel.inventory.counted_item", item=name, count=count)
             if count > 1
@@ -126,15 +158,33 @@ def get_droppable_duel_inventory(instances: list[dict]) -> list[dict]:
 format_duel_inventory = format_duel_display_inventory
 
 
+def format_pocket_drop_announcement(publication: dict, session: dict) -> str:
+    """Keep the stored drop wording and name its snapshot owner."""
+    owner_id = publication["payload"]["drop"]["user_id"]
+    if owner_id == session["player1_user_id"]:
+        owner = session["player1_snapshot"]
+    elif owner_id == session["player2_user_id"]:
+        owner = session["player2_snapshot"]
+    else:
+        raise ValueError("Pocket drop owner is not a duel participant")
+    return f"<b>{format_user_title(owner)}</b>\n{publication['payload']['text']}"
+
+
 async def _spawn_duel_item_event(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
 ):
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        return
     if random.random() >= DUEL_ITEM_EVENT_CHANCE:
         return
 
     event_id = create_duel_item_event(chat_id)
     if event_id is None:
+        return
+
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        discard_unpublished_duel_item_event(event_id)
         return
 
     intro = random.choice(get_text_list("duel.item_event.intros"))
@@ -146,6 +196,10 @@ async def _spawn_duel_item_event(
             )
         ]]
     )
+
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        discard_unpublished_duel_item_event(event_id)
+        return
 
     try:
         message = await context.bot.send_message(
@@ -184,6 +238,10 @@ async def duel_item_event_callback(
     query = update.callback_query
     if not query or not query.data or not query.from_user:
         return
+    from database import is_deleted_user
+    if is_deleted_user(query.from_user.id):
+        await query.answer(get_text("gnome_deletion.deleted"), show_alert=True)
+        return
 
     try:
         event_id = int(query.data.removeprefix(DUEL_ITEM_EVENT_CALLBACK_PREFIX))
@@ -201,8 +259,9 @@ async def duel_item_event_callback(
         event_id,
         chat_id,
         query.from_user.id,
-        lambda: random.choice(DUEL_ITEMS)["id"],
-        lambda: random.random() < HUEGRYZ_CHANCE,
+        roll_generated_item,
+        lambda: is_module_enabled(chat_id, "duel_random_events")
+        and random.random() < HUEGRYZ_CHANCE,
     )
     if status == "not_registered":
         await query.answer(get_text("duel.item_event.not_registered"), show_alert=True)
@@ -229,6 +288,13 @@ async def duel_item_event_callback(
         text += "\n\n" + get_text(
             f"duel.item_event.huegryz.{instance['huegryz_outcome']}"
         )
+    pocket_publication = get_delivered_pocket_drop_for_event(chat_id, event_id)
+    if pocket_publication is not None:
+        pocket_session = get_duel_session(chat_id, pocket_publication["duel_id"])
+        if pocket_session is not None:
+            text = format_pocket_drop_announcement(
+                pocket_publication, pocket_session,
+            ) + "\n\n" + text
 
     try:
         await context.bot.edit_message_text(
@@ -240,3 +306,11 @@ async def duel_item_event_callback(
         )
     except Exception:
         logging.exception("Не удалось обновить claimed item event %s", event_id)
+    else:
+        try:
+            schedule_auto_delete(context, chat_id, [event["message_id"]])
+        except Exception:
+            logging.exception(
+                "TEMP_MESSAGE_DELETE_FAILED chat_id=%s message_id=%s event_id=%s operation=schedule",
+                chat_id, event["message_id"], event_id,
+            )

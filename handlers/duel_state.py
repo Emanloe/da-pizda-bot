@@ -1,6 +1,26 @@
-"""Deterministic state transitions for an interactive duel."""
+"""Shared ordinary-duel rules and state transitions."""
+
+from dataclasses import dataclass
 
 from config import BERSERK_CHANCE, DUEL_ITEM_STEAL_CHANCE, DUEL_POST_MESSAGE_CHANCE
+from handlers.duel_text import (
+    ATTACK_PHRASES,
+    BLOCK_PHRASES,
+    HIT_PHRASES,
+    MISS_PHRASES,
+    SUICIDE_PHRASES,
+)
+
+DUEL_MOVE_TIMEOUT_SECONDS = 10
+DUEL_WIN_POINTS_AWARD = 10
+DUEL_LOSS_POINTS_AWARD = -5
+
+
+@dataclass(frozen=True)
+class DuelRoundResolution:
+    outcome: str
+    outcome_phrase: str
+    attack_phrase: str | None = None
 
 
 def _is_suicide_roll(suicide_roll: float) -> bool:
@@ -23,8 +43,36 @@ def _is_duel_item_steal_roll(item_steal_roll: float) -> bool:
     return item_steal_roll < DUEL_ITEM_STEAL_CHANCE
 
 
+def choose_duel_item_to_steal(collectible_inventory: list[dict], rng) -> dict | None:
+    """Use the ordinary duel item-steal roll and one concrete instance choice."""
+    if not collectible_inventory or not _is_duel_item_steal_roll(rng.random()):
+        return None
+    return rng.choice(collectible_inventory)
+
+
 def _resolve_zone_outcome(strike_zone: str, block_zone: str) -> str:
     return "block" if strike_zone == block_zone else "hit"
+
+
+def resolve_duel_round(strike_zone: str, block_zone: str, rng) -> DuelRoundResolution:
+    """Resolve one block using the existing RNG calls in their original order.
+
+    ``rng`` is the caller's random module/object so the Telegram path retains
+    its existing RNG hook and the future service uses the same rules.
+    """
+    if _is_suicide_roll(rng.random()):
+        return DuelRoundResolution("suicide", rng.choice(SUICIDE_PHRASES))
+    if _is_miss_roll(rng.random()):
+        return DuelRoundResolution(
+            "miss", rng.choice(MISS_PHRASES), rng.choice(ATTACK_PHRASES),
+        )
+    if _resolve_zone_outcome(strike_zone, block_zone) == "block":
+        return DuelRoundResolution(
+            "block", rng.choice(BLOCK_PHRASES), rng.choice(ATTACK_PHRASES),
+        )
+    return DuelRoundResolution(
+        "hit", rng.choice(HIT_PHRASES), rng.choice(ATTACK_PHRASES),
+    )
 
 
 def _get_duel_participant_ineligibility(user: dict) -> str | None:
@@ -40,8 +88,8 @@ def _build_duel_result_plan(
     winner_title: str,
     max_daily_points: int,
 ) -> dict:
-    winner_points = max(0, min(max_daily_points, winner["points"] + 10))
-    loser_points = max(0, loser["points"] - 5)
+    winner_points = max(0, min(max_daily_points, winner["points"] + DUEL_WIN_POINTS_AWARD))
+    loser_points = max(0, loser["points"] + DUEL_LOSS_POINTS_AWARD)
     result_plan = {
         "is_dick_stolen": is_dick_stolen,
         "winner_reached_max": (

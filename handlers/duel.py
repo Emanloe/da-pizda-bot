@@ -1,14 +1,16 @@
 import asyncio
-import json
 import logging
 import random
-from html import escape
-from pathlib import Path
+import re
+import secrets
+import time
+from html import escape, unescape
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes
 from text_resources import get_text
+from module_settings import is_module_enabled
 from config import (
     TOP_SORT_BY,
     ADMIN_IDS,
@@ -23,6 +25,7 @@ from config import (
 from database import (
     get_or_create_duel_user,
     get_duel_user_by_username,
+    get_duel_user_by_id,
     delete_duel_user_by_username,
     apply_duel_result_plan,
     apply_duel_berserk,
@@ -36,6 +39,7 @@ from database import (
     get_bosses_defeated,
     is_boss_enabled,
     set_boss_enabled,
+    is_deleted_user,
     add_duel_inventory_item,
     get_duel_inventory,
     has_huecrab,
@@ -87,17 +91,38 @@ from handlers.boss_state import (
     _record_boss_block_choice,
 )
 from handlers.duel_input import extract_username as _extract_username
+from handlers.duel_service import list_duel_opponents
+from handlers.player_stats import player_stats_read_model, format_player_stats_telegram
+from handlers.duel_service import (
+    start_persistent_duel, submit_persistent_duel_attack,
+    submit_persistent_duel_block,
+)
+from handlers.boss_service import apply_boss_action
+from handlers.boss_result_repository import (
+    build_boss_result, save_boss_result, update_boss_result_loot,
+    update_boss_result_narrative, update_boss_result_rewards,
+)
+from handlers.persistent_duel_publisher import recover_persistent_duel_chat
 from handlers.duel_state import (
     _advance_duel_round,
     _build_duel_result_plan,
     _get_duel_participant_ineligibility,
+    DUEL_MOVE_TIMEOUT_SECONDS,
     _is_miss_roll,
     _is_berserk_roll,
     _is_duel_item_steal_roll,
+    choose_duel_item_to_steal,
     _is_duel_post_message_roll,
     _is_suicide_roll,
     _resolve_zone_outcome,
     _set_attack_choice,
+    resolve_duel_round,
+)
+from handlers.duel_catalog import (
+    DWARFS_FACTS,
+    DUEL_POST_MESSAGES,
+    _DUEL_POST_MESSAGES_PATH,
+    _load_duel_post_messages,
 )
 from handlers.duel_messaging import (
     AUTO_DELETE_DELAY,
@@ -111,11 +136,10 @@ from handlers.hyperborean_event import (
     hyperboreic_huy_daily_job,
 )
 from handlers.boss_registration import (
-    _boss_clear_registrations,
+    _boss_consume_registrations,
     _boss_get_registered_chat_ids,
     _boss_get_registered_users,
     _boss_register_user,
-    _boss_registration_is_open,
 )
 from handlers.duel_items import (
     DUEL_ITEM_EVENT_CALLBACK_PREFIX,
@@ -125,35 +149,7 @@ from handlers.duel_items import (
     get_duel_item_name,
 )
 
-MOVE_TIMEOUT = 10  # 10 секунд на ход
-
-_DWARFS_FACTS_PATH = Path(__file__).resolve().parent.parent / "data" / "dwarfs_facts.json"
-with open(_DWARFS_FACTS_PATH, encoding="utf-8") as _facts_file:
-    DWARFS_FACTS = tuple(json.load(_facts_file)["facts"])
-
-_DUEL_POST_MESSAGES_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "duel_post_messages.json"
-)
-
-
-def _load_duel_post_messages(path=_DUEL_POST_MESSAGES_PATH):
-    try:
-        with open(path, encoding="utf-8") as messages_file:
-            messages = json.load(messages_file)
-    except (OSError, json.JSONDecodeError):
-        logging.exception("Не удалось загрузить каталог post-duel сообщений")
-        return ()
-
-    if not isinstance(messages, list) or not messages or not all(
-        isinstance(message, str) for message in messages
-    ):
-        logging.error("Каталог post-duel сообщений пуст или некорректен")
-        return ()
-    return tuple(messages)
-
-
-DUEL_POST_MESSAGES = _load_duel_post_messages()
-
+MOVE_TIMEOUT = DUEL_MOVE_TIMEOUT_SECONDS  # 10 секунд на ход
 
 async def gnomed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
@@ -190,6 +186,8 @@ async def gnomed_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _maybe_drop_loser_inventory_item(chat_id: int, loser_id: int) -> dict | None:
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        return None
     inventory = get_droppable_duel_inventory(
         get_duel_inventory(chat_id, loser_id)
     )
@@ -203,6 +201,9 @@ def _maybe_drop_loser_inventory_item(chat_id: int, loser_id: int) -> dict | None
 
 
 async def _publish_duel_drop(context, drop: dict) -> None:
+    if not is_module_enabled(drop["chat_id"], "duel_random_events"):
+        restore_unpublished_duel_drop(drop, None)
+        return
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
         get_text("duel.item_event.button"),
         callback_data=f"{DUEL_ITEM_EVENT_CALLBACK_PREFIX}{drop['event_id']}",
@@ -247,12 +248,9 @@ def _maybe_steal_loser_inventory_item(
     inventory = get_droppable_duel_inventory(
         get_duel_inventory(chat_id, loser_id)
     )
-    if not inventory:
+    instance = choose_duel_item_to_steal(inventory, random)
+    if instance is None:
         return None
-    if not _is_duel_item_steal_roll(random.random()):
-        return None
-
-    instance = random.choice(inventory)
     if not transfer_duel_inventory_item(
         chat_id,
         loser_id,
@@ -264,7 +262,8 @@ def _maybe_steal_loser_inventory_item(
 
 
 def _maybe_award_boss_item(chat_id: int, battle: dict) -> str | None:
-    survivors = _boss_alive_players(battle)
+    survivors = [p for p in _boss_alive_players(battle)
+                 if not is_deleted_user(p["tg_user"].id)]
     if not survivors:
         return None
     if random.random() >= BOSS_ITEM_DROP_CHANCE:
@@ -273,6 +272,12 @@ def _maybe_award_boss_item(chat_id: int, battle: dict) -> str | None:
     survivor = random.choice(survivors)
     item = random.choice(DUEL_ITEMS)
     add_duel_inventory_item(chat_id, survivor["tg_user"].id, item["id"])
+    battle["_final_item_loot"] = {
+        "recipient_user_id": survivor["tg_user"].id,
+        "recipient_title": format_user_title_plain(survivor["data"]),
+        "item_id": item["id"],
+        "item_name": item["name"],
+    }
     return get_text(
         "boss.report.item_loot",
         item_name=escape(item["name"]),
@@ -288,6 +293,8 @@ def _maybe_award_boss_item(chat_id: int, battle: dict) -> str | None:
 # ACTIVE_DUELS[chat_id] = duel_state
 #
 # В одном чате одновременно может идти только одна дуэль.
+# Legacy-only compatibility for direct unit tests below. bot.py registers the
+# persistent adapter; no production ordinary-duel handler reads this mapping.
 ACTIVE_DUELS = {}
 
 # ============================================================
@@ -331,46 +338,27 @@ ACTIVE_DUELS = {}
 # }
 
 
+BOSS_CATALOG_IDS = (
+    "deep_snouted_baron", "dick_crusher_face_eater",
+    "prince_of_underground_chaos", "great_knife_beard",
+    "dick_devourer", "chizyanovsky_skier",
+)
 BOSSES = [
     {
-        "name": get_text("boss.catalog.deep_snouted_baron.name"),
-        "emoji": get_text("boss.catalog.deep_snouted_baron.emoji"),
-        "description": get_text(
-            "boss.catalog.deep_snouted_baron.description"
-        ),
-    },
-    {
-        "name": get_text("boss.catalog.dick_crusher_face_eater.name"),
-        "emoji": get_text("boss.catalog.dick_crusher_face_eater.emoji"),
-        "description": get_text(
-            "boss.catalog.dick_crusher_face_eater.description"
-        ),
-    },
-    {
-        "name": get_text("boss.catalog.prince_of_underground_chaos.name"),
-        "emoji": get_text("boss.catalog.prince_of_underground_chaos.emoji"),
-        "description": get_text(
-            "boss.catalog.prince_of_underground_chaos.description"
-        ),
-    },
-    {
-        "name": get_text("boss.catalog.great_knife_beard.name"),
-        "emoji": get_text("boss.catalog.great_knife_beard.emoji"),
-        "description": get_text(
-            "boss.catalog.great_knife_beard.description"
-        ),
-    },
-    {
-        "name": get_text("boss.catalog.dick_devourer.name"),
-        "emoji": get_text("boss.catalog.dick_devourer.emoji"),
-        "description": get_text("boss.catalog.dick_devourer.description"),
-    },
-    {
-        "name": get_text("boss.catalog.chizyanovsky_skier.name"),
-        "emoji": get_text("boss.catalog.chizyanovsky_skier.emoji"),
-        "description": get_text("boss.catalog.chizyanovsky_skier.description"),
-    },
+        "name": get_text(f"boss.catalog.{boss_id}.name"),
+        "emoji": get_text(f"boss.catalog.{boss_id}.emoji"),
+        "description": get_text(f"boss.catalog.{boss_id}.description"),
+    }
+    for boss_id in BOSS_CATALOG_IDS
 ]
+
+
+def _boss_catalog_id(boss: dict) -> str | None:
+    return next(
+        (boss_id for boss_id, known in zip(BOSS_CATALOG_IDS, BOSSES)
+         if boss is known or boss == known),
+        None,
+    )
 
 
 # ============================================================
@@ -383,7 +371,7 @@ BOSSES = [
 # КЛАВИАТУРЫ
 # ============================================================
 
-def _get_strike_keyboard(turn_id: int) -> InlineKeyboardMarkup:
+def _get_strike_keyboard(turn_id: int, duel_id: int | None = None) -> InlineKeyboardMarkup:
     """
     Кнопки атаки привязаны к конкретному turn_id.
 
@@ -395,15 +383,15 @@ def _get_strike_keyboard(turn_id: int) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 get_text("duel.live.keyboards.strike.head"),
-                callback_data=f"duel_strike_head_{turn_id}",
+                callback_data=f"duel_strike_head_{duel_id}_{turn_id}" if duel_id is not None else f"duel_strike_head_{turn_id}",
             ),
             InlineKeyboardButton(
                 get_text("duel.live.keyboards.strike.body"),
-                callback_data=f"duel_strike_body_{turn_id}",
+                callback_data=f"duel_strike_body_{duel_id}_{turn_id}" if duel_id is not None else f"duel_strike_body_{turn_id}",
             ),
             InlineKeyboardButton(
                 get_text("duel.live.keyboards.strike.dick"),
-                callback_data=f"duel_strike_dick_{turn_id}",
+                callback_data=f"duel_strike_dick_{duel_id}_{turn_id}" if duel_id is not None else f"duel_strike_dick_{turn_id}",
             ),
         ]
     ]
@@ -411,7 +399,7 @@ def _get_strike_keyboard(turn_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
-def _get_block_keyboard(turn_id: int) -> InlineKeyboardMarkup:
+def _get_block_keyboard(turn_id: int, duel_id: int | None = None) -> InlineKeyboardMarkup:
     """
     Кнопки защиты привязаны к конкретному turn_id.
     """
@@ -420,15 +408,15 @@ def _get_block_keyboard(turn_id: int) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 get_text("duel.live.keyboards.block.head"),
-                callback_data=f"duel_block_head_{turn_id}",
+                callback_data=f"duel_block_head_{duel_id}_{turn_id}" if duel_id is not None else f"duel_block_head_{turn_id}",
             ),
             InlineKeyboardButton(
                 get_text("duel.live.keyboards.block.body"),
-                callback_data=f"duel_block_body_{turn_id}",
+                callback_data=f"duel_block_body_{duel_id}_{turn_id}" if duel_id is not None else f"duel_block_body_{turn_id}",
             ),
             InlineKeyboardButton(
                 get_text("duel.live.keyboards.block.dick"),
-                callback_data=f"duel_block_dick_{turn_id}",
+                callback_data=f"duel_block_dick_{duel_id}_{turn_id}" if duel_id is not None else f"duel_block_dick_{turn_id}",
             ),
         ]
     ]
@@ -900,21 +888,18 @@ async def _process_block_choice(
 
     att_title = format_user_title(attacker_data)
     def_title = format_user_title(defender_data)
+    resolution = resolve_duel_round(strike_zone, block_zone, random)
 
     # ========================================================
     # 1. Шанс 1% — самоубийство атаковавшего
     # ========================================================
 
-    if _is_suicide_roll(random.random()):
-
-        suicide_phrase = random.choice(
-            SUICIDE_PHRASES
-        )
+    if resolution.outcome == "suicide":
 
         res_text = get_text(
             "duel.live.outcomes.suicide",
             attacker_title=att_title,
-            suicide_phrase=suicide_phrase,
+            suicide_phrase=resolution.outcome_phrase,
             defender_title=def_title,
         )
 
@@ -934,15 +919,7 @@ async def _process_block_choice(
     # 2. Шанс 5% — промах
     # ========================================================
 
-    if _is_miss_roll(random.random()):
-
-        miss_phrase = random.choice(
-            MISS_PHRASES
-        )
-
-        att_action = random.choice(
-            ATTACK_PHRASES
-        )
+    if resolution.outcome == "miss":
 
         # Смена ролей.
         _advance_duel_round(duel)
@@ -958,9 +935,9 @@ async def _process_block_choice(
 
         text = _build_duel_miss_text(
             att_title,
-            att_action,
+            resolution.attack_phrase,
             strike_zone,
-            miss_phrase,
+            resolution.outcome_phrase,
             new_att_title,
             new_def_title,
             MOVE_TIMEOUT,
@@ -1008,15 +985,7 @@ async def _process_block_choice(
     # 3. Сравнение УДАРА и БЛОКА
     # ========================================================
 
-    if _resolve_zone_outcome(strike_zone, block_zone) == "block":
-
-        block_phrase = random.choice(
-            BLOCK_PHRASES
-        )
-
-        att_action = random.choice(
-            ATTACK_PHRASES
-        )
+    if resolution.outcome == "block":
 
         # Смена ролей.
         _advance_duel_round(duel)
@@ -1033,9 +1002,9 @@ async def _process_block_choice(
         text = _build_duel_block_text(
             att_title,
             def_title,
-            att_action,
+            resolution.attack_phrase,
             strike_zone,
-            block_phrase,
+            resolution.outcome_phrase,
             new_att_title,
             new_def_title,
             MOVE_TIMEOUT,
@@ -1083,22 +1052,14 @@ async def _process_block_choice(
 
     else:
 
-        hit_phrase = random.choice(
-            HIT_PHRASES
-        )
-
-        att_action = random.choice(
-            ATTACK_PHRASES
-        )
-
         res_text = get_text(
             "duel.live.outcomes.hit",
             attacker_title=att_title,
-            attack_phrase=att_action,
+            attack_phrase=resolution.attack_phrase,
             strike_target=TARGET_NAMES[strike_zone],
             defender_title=def_title,
             block_target=TARGET_NAMES[block_zone],
-            hit_phrase=hit_phrase,
+            hit_phrase=resolution.outcome_phrase,
         )
 
         await _finish_duel(
@@ -1500,6 +1461,9 @@ async def duel_command(
     chat_id = update.message.chat_id
 
     initiator_tg = update.message.from_user
+    if is_deleted_user(initiator_tg.id):
+        await send_and_schedule(update, context, get_text("gnome_deletion.deleted"))
+        return
 
     # --------------------------------------------------------
     # Проверяем наличие хуя ДО выбора соперника.
@@ -1529,51 +1493,33 @@ async def duel_command(
 
     if not target_username:
 
-        top_list = get_duel_top(
-            chat_id=chat_id,
-            limit=20,
-            include_dwarf_name=True,
-        )
+        selection = list_duel_opponents(chat_id, initiator["user_id"])
+        if selection.ineligibility == "no_dick":
+            await send_and_schedule(
+                update,
+                context,
+                get_text("duel.command.no_dick"),
+            )
+            return
+
+        if selection.ineligibility == "no_points":
+            await send_and_schedule(
+                update,
+                context,
+                get_text("duel.admission.initiator.no_points"),
+            )
+            return
 
         keyboard = []
 
-        for row in top_list:
-
-            username, display_name, *_ = row
-
-            if not username:
-                continue
-
-            if (
-                initiator_tg.username
-                and initiator_tg.username.lower()
-                == username.lower()
-            ):
-                continue
-
-            opponent = get_duel_user_by_username(
-                username,
-                chat_id,
-            )
-
-            if not opponent:
-                continue
-
-            if opponent["dick_stolen_today"]:
-                continue
-
-            clean_label = format_user_title_plain({
-                "display_name": (display_name or username).lstrip("@"),
-                "dwarf_name": opponent.get("dwarf_name"),
-            })
-
-            label = get_text("duel.selection.button_label", title=clean_label)
+        for opponent in selection.opponents:
+            label = get_text("duel.selection.button_label", title=opponent.title)
 
             keyboard.append(
                 [
                     InlineKeyboardButton(
                         label,
-                        callback_data=f"start_duel_{username}",
+                        callback_data=f"start_duel_{opponent.username}",
                     )
                 ]
             )
@@ -1613,7 +1559,7 @@ async def duel_command(
         [update.message.message_id],
     )
 
-    await _process_duel_fight(
+    await _process_persistent_duel_fight(
         context,
         initiator_tg,
         target_username,
@@ -1646,6 +1592,9 @@ async def duel_select_callback(
     )
 
     initiator_tg = query.from_user
+    if is_deleted_user(initiator_tg.id):
+        await query.answer(get_text("gnome_deletion.deleted"), show_alert=True)
+        return
     chat_id = update.effective_chat.id
 
     await query.answer()
@@ -1655,7 +1604,7 @@ async def duel_select_callback(
     except Exception:
         pass
 
-    await _process_duel_fight(
+    await _process_persistent_duel_fight(
         context,
         initiator_tg,
         target_username,
@@ -1699,87 +1648,137 @@ def _legacy_get_huyanie_title(stolen_dicks_count: int) -> str:
 async def duel_stats_command(update, context):
     if not update.message or not update.message.from_user or not update.message.chat:
         return
+    if is_deleted_user(update.message.from_user.id):
+        await send_and_schedule(update, context, get_text("gnome_deletion.deleted"))
+        return
 
     chat_id = update.message.chat_id
 
-    user = get_or_create_duel_user(
-        update.message.from_user,
-        chat_id,
-    )
+    get_or_create_duel_user(update.message.from_user, chat_id)
+    model = player_stats_read_model(chat_id, update.message.from_user.id)
+    if model is not None:
+        await send_and_schedule(update, context, format_player_stats_telegram(model))
 
-    title = format_user_title(user)
 
-    status = (
-        get_text("duel.stats.status.no_dick")
-        if user["dick_stolen_today"]
-        else get_text("duel.stats.status.has_dick")
-    )
+async def inspect_command(update, context):
+    if not update.message or not update.message.from_user or not update.message.chat:
+        return
+    if is_deleted_user(update.message.from_user.id):
+        await send_and_schedule(update, context, get_text("gnome_deletion.deleted"))
+        return
+    message = update.message
+    try:
+        chat_id = message.chat_id
+        reply_user = getattr(getattr(message, "reply_to_message", None), "from_user", None)
+        target = None
+        if reply_user is not None:
+            target = get_duel_user_by_id(chat_id, reply_user.id, read_only=True)
+        else:
+            username = _extract_username(update, context)
+            if username:
+                target = get_duel_user_by_username(username, chat_id, read_only=True)
+            else:
+                await send_and_schedule(update, context, get_text("duel.inspect.usage"))
+                return
+        if target is None:
+            await send_and_schedule(update, context, get_text("duel.inspect.inaccessible"))
+            return
+        model = player_stats_read_model(chat_id, target["user_id"])
+        if model is None:
+            await send_and_schedule(update, context, get_text("duel.inspect.inaccessible"))
+            return
+        await send_and_schedule(update, context, format_player_stats_telegram(model, inspected=True))
+    finally:
+        try:
+            await message.delete()
+        except Exception:
+            pass
 
-    bosses_defeated = get_bosses_defeated(
-        user_id=update.message.from_user.id,
-        chat_id=chat_id,
-    )
 
-    win_title = get_win_title(user["wins"])
-    loss_title = get_loss_title(user["losses"])
-    stolen_title = get_stolen_dicks_title(
-        user["stolen_dicks_count"]
-    )
-
-    huyanie_titles = []
-
-    if win_title:
-        huyanie_titles.append(
-            get_text("duel.stats.title_item", title=win_title, count=user["wins"])
+async def _process_persistent_duel_fight(
+    context, initiator_tg, target_username: str, chat_id: int,
+    original_msg_id: int | None = None,
+):
+    """Translate Telegram's target selection into one authoritative start."""
+    initiator = get_or_create_duel_user(initiator_tg, chat_id)
+    opponent = get_duel_user_by_username(target_username, chat_id)
+    opponent_id = opponent["user_id"] if opponent else -1
+    try:
+        started = start_persistent_duel(
+            chat_id, initiator["user_id"], opponent_id,
+            original_message_id=original_msg_id,
         )
+    except Exception:
+        logging.exception("Persistent duel start failed in chat %s", chat_id)
+        return
+    if started.success:
+        try:
+            await recover_persistent_duel_chat(chat_id, context.bot, job_queue=context.job_queue)
+        except Exception:
+            logging.exception("Persistent duel publication failed in chat %s", chat_id)
+        return
+    reason = started.reason
+    if reason == "active_duel":
+        message = get_text("duel.admission.active_duel")
+    elif reason == "self_target":
+        message = get_text("duel.admission.self_target")
+    elif reason == "opponent_not_registered":
+        message = get_text("duel.admission.opponent.not_found", username=target_username)
+    elif reason == "initiator_no_points":
+        message = get_text("duel.admission.initiator.no_points")
+    elif reason == "opponent_no_points":
+        message = get_text("duel.admission.opponent.no_points", title=format_user_title(opponent))
+    elif reason in ("initiator_no_dick", "opponent_no_dick"):
+        person = initiator if reason.startswith("initiator") else opponent
+        message = get_text("duel.admission.participant.no_dick", title=format_user_title(person))
+    else:
+        logging.warning("Persistent duel admission rejected: %s in chat %s", reason, chat_id)
+        return
+    sent = await context.bot.send_message(chat_id, message, parse_mode="HTML")
+    schedule_auto_delete(context, chat_id, [sent.message_id])
 
-    if loss_title:
-        huyanie_titles.append(
-            get_text("duel.stats.title_item", title=loss_title, count=user["losses"])
-        )
 
-    if stolen_title:
-        huyanie_titles.append(
-            get_text(
-                "duel.stats.title_item",
-                title=stolen_title,
-                count=user["stolen_dicks_count"],
-            )
-        )
-
-    huyanie_text = (
-        "\n".join(huyanie_titles)
-        if huyanie_titles
-        else get_text("duel.stats.no_titles")
-    )
-
-    text = get_text(
-        "duel.stats.summary",
-        title=title,
-        points=user["points"],
-        wins=user["wins"],
-        losses=user["losses"],
-        huyanie_text=huyanie_text,
-        bosses_defeated=bosses_defeated,
-        status=status,
-    )
-    inventory = get_duel_inventory(
-        chat_id,
-        update.message.from_user.id,
-    )
-    text += "\n" + get_text(
-        "duel.inventory.line",
-        items=format_duel_display_inventory(inventory),
-    )
-    if has_huecrab(chat_id, update.message.from_user.id):
-        text += "\n" + get_text("huecrab.inventory")
-
-    await send_and_schedule(
-        update,
-        context,
-        text,
-    )
-
+async def persistent_duel_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reject legacy buttons and apply only chat/duel/turn scoped actions."""
+    query = update.callback_query
+    if query is None or not isinstance(query.data, str):
+        return
+    parts = query.data.split("_")
+    if (len(parts) != 5 or parts[0] != "duel" or
+            parts[1] not in ("strike", "block") or
+            parts[2] not in TARGET_NAMES or
+            not parts[3].isdecimal() or not parts[4].isdecimal()):
+        await query.answer(get_text("duel.action_alert.stale_button"), show_alert=True)
+        return
+    action, zone, duel_id, turn_id = parts[1], parts[2], int(parts[3]), int(parts[4])
+    if duel_id <= 0 or turn_id <= 0:
+        await query.answer(get_text("duel.action_alert.stale_button"), show_alert=True)
+        return
+    chat_id = update.effective_chat.id
+    try:
+        operation = (submit_persistent_duel_attack if action == "strike"
+                     else submit_persistent_duel_block)
+        result = operation(chat_id, duel_id, query.from_user.id, turn_id, zone)
+    except Exception:
+        logging.exception("Persistent duel callback failed in chat %s", chat_id)
+        await query.answer(get_text("duel.action_alert.stale_button"), show_alert=True)
+        return
+    if not result.accepted:
+        if result.reason == "wrong_actor":
+            key = f"duel.action_alert.{action}.wrong_actor"
+        elif result.reason == "wrong_phase":
+            key = f"duel.action_alert.{action}.wrong_phase"
+        elif result.reason == "not_found":
+            key = "duel.action_alert.no_active_duel"
+        else:
+            key = "duel.action_alert.turn_ended"
+        await query.answer(get_text(key), show_alert=True)
+        return
+    await query.answer()
+    try:
+        await recover_persistent_duel_chat(chat_id, context.bot, job_queue=context.job_queue)
+    except Exception:
+        logging.exception("Persistent duel follow-up failed in chat %s", chat_id)
 
 # ============================================================
 # ТОП
@@ -1926,11 +1925,99 @@ BOSS_PHASE_TIMEOUT = 10
 BOSS_ROUND_PAUSE = 5
 
 BOSS_JOIN_TIMEOUT = 30
+BOSS_LOG_DELETE_DELAY = 60
 
 
 BOSS_ZONES = ("head", "body", "dick")
 
 ACTIVE_BOSS_BATTLES = {}
+_BOSS_START_LOCKS = {}
+
+
+def _boss_fit_log(text: str) -> str:
+    """Keep one HTML log within Telegram's message limit."""
+    def units(value):
+        return len(value.encode("utf-16-le")) // 2
+
+    if units(text) <= 4000:
+        return text
+    plain = unescape(re.sub(r"<[^>]+>", "", text))
+    suffix = get_text("boss.round.log_truncated")
+    limit = 4000 - units(suffix)
+    plain = plain[:limit]
+    while units(escape(plain)) > limit:
+        plain = plain[:-1]
+    return escape(plain) + suffix
+
+
+def _boss_schedule_log_delete(context, chat_id, battle, message_id):
+    try:
+        schedule_auto_delete(
+            context, chat_id, [message_id], delay=BOSS_LOG_DELETE_DELAY,
+            battle_id=battle.get("battle_id"), round_num=battle["round"],
+        )
+    except Exception:
+        logging.exception(
+            "BATTLE_MESSAGE_DELETE_FAILED chat_id=%s battle_id=%s round=%s message_id=%s operation=schedule",
+            chat_id, battle.get("battle_id"), battle["round"], message_id,
+        )
+
+
+async def _boss_publish_round_log(context, chat_id, battle, text):
+    text = _boss_fit_log(text)
+    message_id = battle.get("battle_log_message_id")
+    if message_id is not None and battle.get("battle_log_rendered_text") == text:
+        return message_id
+    if message_id is not None:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=message_id, text=text, parse_mode="HTML",
+            )
+            logging.info(
+                "BATTLE_MESSAGE_EDIT chat_id=%s battle_id=%s round=%s message_id=%s",
+                chat_id, battle.get("battle_id"), battle["round"], message_id,
+            )
+            battle["battle_log_rendered_text"] = text
+            return message_id
+        except BadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                battle["battle_log_rendered_text"] = text
+                return message_id
+            logging.exception(
+                "BATTLE_MESSAGE_EDIT_FAILED chat_id=%s battle_id=%s round=%s message_id=%s",
+                chat_id, battle.get("battle_id"), battle["round"], message_id,
+            )
+            _boss_schedule_log_delete(context, chat_id, battle, message_id)
+        except Exception:
+            logging.exception(
+                "BATTLE_MESSAGE_EDIT_FAILED chat_id=%s battle_id=%s round=%s message_id=%s",
+                chat_id, battle.get("battle_id"), battle["round"], message_id,
+            )
+            _boss_schedule_log_delete(context, chat_id, battle, message_id)
+    try:
+        message = await context.bot.send_message(
+            chat_id=chat_id, text=text, parse_mode="HTML",
+        )
+    except Exception:
+        logging.exception(
+            "BATTLE_MESSAGE_CREATE_FAILED chat_id=%s battle_id=%s round=%s",
+            chat_id, battle.get("battle_id"), battle["round"],
+        )
+        return None
+    battle["battle_log_message_id"] = message.message_id
+    battle["battle_log_rendered_text"] = text
+    logging.info(
+        "BATTLE_MESSAGE_CREATE chat_id=%s battle_id=%s round=%s message_id=%s",
+        chat_id, battle.get("battle_id"), battle["round"], message.message_id,
+    )
+    return message.message_id
+
+
+async def _boss_publish_pending_actions(context, chat_id, battle):
+    lines = battle.get("battle_log_lines", [])
+    if lines:
+        text = get_text("boss.round.log_heading", round=battle["round"])
+        await _boss_publish_round_log(context, chat_id, battle, text + "\n\n" + "\n".join(lines))
 
 # ------------------------------------------------------------
 # КЛАВИАТУРЫ
@@ -2045,6 +2132,16 @@ def _boss_cancel_timer(battle):
     task.cancel()
 
 
+def _boss_schedule_phase_timer(context, chat_id, battle, phase):
+    """Keep the existing timeout task; record its deadline for presentation."""
+    battle["deadline_at"] = time.time() + BOSS_PHASE_TIMEOUT
+    battle["phase_task"] = asyncio.create_task(
+        _boss_phase_timer(
+            context, chat_id, battle["round"], phase, battle.get("battle_id"),
+        )
+    )
+
+
 def _boss_auto_zone():
     return random.choice(BOSS_ZONES)
 
@@ -2083,23 +2180,7 @@ async def _boss_auto_choose_for_zazevasha(
             zone=BOSS_ZONE_NAMES[zone],
         )
 
-    try:
-        timeout_msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=action_text,
-            parse_mode="HTML",
-        )
-        schedule_auto_delete(
-            context,
-            chat_id,
-            [timeout_msg.message_id],
-        )
-    except Exception:
-        logging.exception(
-            "Не удалось отправить сообщение автодействия босса "
-            "в чат %s",
-            chat_id,
-        )
+    battle.setdefault("battle_log_lines", []).append(action_text)
 
 
 # ------------------------------------------------------------
@@ -2137,22 +2218,28 @@ async def _boss_start_round(
         boss_attack,
         boss_block,
     )
+    battle["battle_log_message_id"] = None
+    battle["battle_log_rendered_text"] = None
+    battle["battle_log_lines"] = []
+    started_round = battle["round"]
+
+    await _boss_publish_round_log(
+        context, chat_id, battle,
+        get_text("boss.round.log_heading", round=started_round),
+    )
 
     await _boss_render_phase(
         context,
         chat_id,
     )
 
+    # A Mini App move may finish this phase while the Telegram edit is in flight.
+    if (ACTIVE_BOSS_BATTLES.get(chat_id) is not battle
+            or battle["round"] != started_round or battle["phase"] != "attack"):
+        return
     _boss_cancel_timer(battle)
 
-    battle["phase_task"] = asyncio.create_task(
-        _boss_phase_timer(
-            context,
-            chat_id,
-            battle["round"],
-            "attack",
-        )
-    )
+    _boss_schedule_phase_timer(context, chat_id, battle, "attack")
 
 
 # ------------------------------------------------------------
@@ -2164,6 +2251,7 @@ async def _boss_phase_timer(
     chat_id,
     round_num,
     phase,
+    battle_id=None,
 ):
     current_task = asyncio.current_task()
 
@@ -2175,6 +2263,8 @@ async def _boss_phase_timer(
     battle = ACTIVE_BOSS_BATTLES.get(chat_id)
 
     if not battle:
+        return
+    if battle_id is not None and battle.get("battle_id") != battle_id:
         return
 
     finish_defeat = False
@@ -2213,6 +2303,8 @@ async def _boss_phase_timer(
                         phase,
                     )
 
+            await _boss_publish_pending_actions(context, chat_id, battle)
+
             if phase == "attack":
                 battle["phase"] = "block"
                 switch_to_block = True
@@ -2232,7 +2324,7 @@ async def _boss_phase_timer(
     if switch_to_block:
         current_battle = ACTIVE_BOSS_BATTLES.get(chat_id)
 
-        if not current_battle:
+        if current_battle is not battle:
             return
 
         await _boss_render_phase(
@@ -2242,24 +2334,18 @@ async def _boss_phase_timer(
 
         current_battle = ACTIVE_BOSS_BATTLES.get(chat_id)
 
-        if not current_battle:
+        if current_battle is not battle:
             return
 
         async with current_battle["lock"]:
             if (
-                current_battle["round"] != round_num
+                ACTIVE_BOSS_BATTLES.get(chat_id) is not battle
+                or current_battle["round"] != round_num
                 or current_battle["phase"] != "block"
             ):
                 return
 
-            current_battle["phase_task"] = asyncio.create_task(
-                _boss_phase_timer(
-                    context,
-                    chat_id,
-                    round_num,
-                    "block",
-                )
-            )
+            _boss_schedule_phase_timer(context, chat_id, current_battle, "block")
 
         return
 
@@ -2279,262 +2365,130 @@ async def boss_callback(
     context: ContextTypes.DEFAULT_TYPE,
 ):
     query = update.callback_query
-
     if not query or not query.data:
         return
-
-    chat_id = update.effective_chat.id
-
-    battle = ACTIVE_BOSS_BATTLES.get(chat_id)
-
-    if not battle:
-        await query.answer(
-            get_text("boss.callback.battle_finished"),
-            show_alert=True,
-        )
+    if query.from_user is not None and is_deleted_user(query.from_user.id):
+        await query.answer(get_text("gnome_deletion.deleted"), show_alert=True)
         return
 
-    async with battle["lock"]:
-        callback_data = query.data
-        user_id = query.from_user.id
-
-        if callback_data == "boss_join":
-            if battle["phase"] != "join":
-                await query.answer(
-                    get_text("boss.callback.join.already_started"),
-                    show_alert=True,
-                )
-                return
-
-            if user_id in battle["participants"]:
-                await query.answer(
-                    get_text("boss.callback.join.already_participating"),
-                    show_alert=True,
-                )
-                return
-
-            battle["participants"][user_id] = _boss_make_participant(
-                query.from_user,
-                chat_id,
+    data = query.data
+    if data == "boss_reg_next":
+        message = getattr(query, "message", None)
+        chat = getattr(message, "chat", None)
+        chat_id = getattr(chat, "id", None)
+        user_id = getattr(getattr(query, "from_user", None), "id", None)
+        message_id = getattr(message, "message_id", None)
+        current_battle = ACTIVE_BOSS_BATTLES.get(chat_id)
+        current_battle_id = current_battle.get("battle_id") if current_battle else None
+        logging.info(
+            "BOSS_NEXT_BATTLE_SIGNUP_CALLBACK chat_id=%s user_id=%s current_battle_id=%s "
+            "callback_data=%s message_id=%s",
+            chat_id, user_id, current_battle_id, data, message_id,
+        )
+        if chat is None or chat.type not in {"group", "supergroup"}:
+            logging.info(
+                "BOSS_NEXT_BATTLE_SIGNUP_REJECTED chat_id=%s user_id=%s "
+                "current_battle_id=%s message_id=%s reason=group_only",
+                chat_id, user_id, current_battle_id, message_id,
             )
-
-            await query.answer(
-                get_text("boss.callback.join.joined")
-            )
-
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=battle["message_id"],
-                    text=get_text(
-                        "boss.callback.join.progress",
-                        boss_name=battle["boss"]["name"],
-                        participants=len(battle["participants"]),
-                    ),
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton(
-                                get_text("boss.join.button"),
-                                callback_data="boss_join",
-                            )
-                        ]
-                    ]),
-                )
-            except Exception:
-                pass
-
+            await query.answer(get_text("boss.registration.group_only"), show_alert=True)
             return
-
-        if callback_data.startswith("boss_attack_"):
-            if battle["phase"] != "attack":
-                await query.answer(
-                    get_text("boss.callback.attack_phase_closed"),
-                    show_alert=True,
-                )
-                return
-
-            participant = battle["participants"].get(
-                user_id
+        if not query.from_user:
+            logging.warning(
+                "BOSS_NEXT_BATTLE_SIGNUP_REJECTED chat_id=%s user_id=%s "
+                "current_battle_id=%s message_id=%s reason=missing_user",
+                chat_id, user_id, current_battle_id, message_id,
             )
+            await query.answer(get_text("boss.registration.callback_error"), show_alert=True)
+            return
+        try:
+            set_boss_enabled(chat_id, True)
+            added = _boss_register_user(chat_id, query.from_user)
+        except Exception:
+            logging.exception(
+                "BOSS_NEXT_BATTLE_SIGNUP_FAILED chat_id=%s user_id=%s "
+                "current_battle_id=%s message_id=%s stage=database",
+                chat_id, user_id, current_battle_id, message_id,
+            )
+            await query.answer(get_text("boss.registration.callback_error"), show_alert=True)
+            return
+        logging.info(
+            "BOSS_NEXT_BATTLE_SIGNUP_%s chat_id=%s user_id=%s current_battle_id=%s "
+            "message_id=%s queue=next",
+            "OK" if added else "ALREADY", chat_id, user_id, current_battle_id, message_id,
+        )
+        try:
+            await query.answer(get_text(
+                "boss.registration.callback_registered" if added
+                else "boss.registration.callback_already_registered"
+            ))
+        except Exception:
+            logging.exception(
+                "BOSS_NEXT_BATTLE_SIGNUP_FAILED chat_id=%s user_id=%s "
+                "current_battle_id=%s message_id=%s stage=answer registration_committed=%s",
+                chat_id, user_id, current_battle_id, message_id, added,
+            )
+        return
 
-            if not participant:
-                await query.answer(
-                    get_text("boss.callback.not_participant"),
-                    show_alert=True,
-                )
-                return
-
-            if not participant["alive"]:
-                await query.answer(
-                    get_text("boss.callback.dead"),
-                    show_alert=True,
-                )
-                return
-
-            parts = callback_data.split("_")
-
-            if len(parts) != 4:
-                await query.answer(
-                    get_text("boss.callback.stale_button"),
-                    show_alert=True,
-                )
-                return
-
+    zone = None
+    round_num = None
+    malformed = False
+    if data == "boss_join":
+        intent = "join"
+    elif data.startswith("boss_attack_") or data.startswith("boss_block_"):
+        intent = "attack" if data.startswith("boss_attack_") else "block"
+        parts = data.split("_")
+        if len(parts) == 4:
             zone = parts[2]
-
             try:
-                button_round = int(parts[3])
+                round_num = int(parts[3])
             except ValueError:
-                await query.answer(
-                    get_text("boss.callback.stale_button"),
-                    show_alert=True,
-                )
-                return
+                malformed = True
+        else:
+            malformed = True
+        if malformed:
+            zone = None
+    else:
+        return
 
-            if button_round != battle["round"]:
-                await query.answer(
-                    get_text("boss.callback.round_finished"),
-                    show_alert=True,
-                )
-                return
+    async def acknowledge():
+        if intent == "join":
+            key = "boss.callback.join.joined"
+        else:
+            key = f"boss.callback.{intent}_ack"
+        await query.answer(
+            get_text(key, zone=BOSS_ZONE_NAMES[zone]) if zone else get_text(key)
+        )
 
-            if zone not in BOSS_ZONES:
-                await query.answer(
-                    get_text("boss.callback.unknown_zone"),
-                    show_alert=True,
-                )
-                return
+    result = await apply_boss_action(
+        context, update.effective_chat.id, query.from_user.id, intent,
+        zone=zone, tg_user=query.from_user, expected_round=round_num,
+        expected_message_id=getattr(getattr(query, "message", None), "message_id", None),
+        expected_phase=intent if intent != "join" else None,
+        on_accepted=acknowledge,
+    )
+    if result.accepted:
+        return
 
-            should_switch_to_block = _record_boss_attack_choice(
-                battle,
-                participant,
-                zone,
-            )
-
-            await query.answer(
-                get_text("boss.callback.attack_ack", zone=BOSS_ZONE_NAMES[zone])
-            )
-
-            await _boss_render_phase(
-                context,
-                chat_id,
-            )
-
-            if should_switch_to_block:
-                _boss_cancel_timer(battle)
-
-                _enter_boss_block_phase(battle)
-
-                await _boss_render_phase(
-                    context,
-                    chat_id,
-                )
-
-                battle["phase_task"] = asyncio.create_task(
-                    _boss_phase_timer(
-                        context,
-                        chat_id,
-                        battle["round"],
-                        "block",
-                    )
-                )
-
-            return
-
-        if callback_data.startswith("boss_block_"):
-            if battle["phase"] != "block":
-                await query.answer(
-                    get_text("boss.callback.block_phase_closed"),
-                    show_alert=True,
-                )
-                return
-
-            participant = battle["participants"].get(
-                user_id
-            )
-
-            if not participant:
-                await query.answer(
-                    get_text("boss.callback.not_participant"),
-                    show_alert=True,
-                )
-                return
-
-            if not participant["alive"]:
-                await query.answer(
-                    get_text("boss.callback.dead"),
-                    show_alert=True,
-                )
-                return
-
-            parts = callback_data.split("_")
-
-            if len(parts) != 4:
-                await query.answer(
-                    get_text("boss.callback.stale_button"),
-                    show_alert=True,
-                )
-                return
-
-            zone = parts[2]
-
-            try:
-                button_round = int(parts[3])
-            except ValueError:
-                await query.answer(
-                    get_text("boss.callback.stale_button"),
-                    show_alert=True,
-                )
-                return
-
-            if button_round != battle["round"]:
-                await query.answer(
-                    get_text("boss.callback.round_finished"),
-                    show_alert=True,
-                )
-                return
-
-            if zone not in BOSS_ZONES:
-                await query.answer(
-                    get_text("boss.callback.unknown_zone"),
-                    show_alert=True,
-                )
-                return
-
-            should_resolve = _record_boss_block_choice(
-                battle,
-                participant,
-                zone,
-            )
-
-            await query.answer(
-                get_text("boss.callback.block_ack", zone=BOSS_ZONE_NAMES[zone])
-            )
-
-            await _boss_render_phase(
-                context,
-                chat_id,
-            )
-
-            if should_resolve:
-                _boss_cancel_timer(battle)
-
-                # Нельзя await-ить _boss_resolve_round здесь:
-                # callback сам ещё держит battle["lock"], а
-                # _boss_resolve_round пытается взять тот же lock.
-                #
-                # Создаём задачу сейчас — она начнёт выполняться
-                # после выхода callback из async with.
-                asyncio.create_task(
-                    _boss_resolve_round(
-                        context,
-                        chat_id,
-                    )
-                )
-
-            return
-
+    if result.code in ("no_active_battle", "stale_battle"):
+        key = "boss.callback.battle_finished"
+    elif intent == "join":
+        key = ("boss.callback.join.already_participating"
+               if result.code == "already_joined"
+               else "boss.callback.join.already_started")
+    elif result.code == "stale_phase":
+        key = f"boss.callback.{intent}_phase_closed"
+    elif result.code == "not_participant":
+        key = "boss.callback.not_participant"
+    elif result.code == "eliminated":
+        key = "boss.callback.dead"
+    elif result.code == "stale_round":
+        key = "boss.callback.round_finished"
+    elif malformed:
+        key = "boss.callback.stale_button"
+    else:
+        key = "boss.callback.unknown_zone"
+    await query.answer(get_text(key), show_alert=True)
 
 # ------------------------------------------------------------
 # РЕЗУЛЬТАТ РАУНДА
@@ -2550,6 +2504,8 @@ async def _boss_resolve_round(
         return
 
     async with battle["lock"]:
+        if ACTIVE_BOSS_BATTLES.get(chat_id) is not battle:
+            return
         # Пока держим lock, только рассчитываем и сохраняем состояние.
         # Telegram API, sleep и финализацию выполняем после выхода из lock.
         if battle["phase"] != "block":
@@ -2654,22 +2610,17 @@ async def _boss_resolve_round(
 
         outcome = round_result["outcome"]
 
-    try:
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=battle["message_id"],
-            text=text,
-            parse_mode="HTML",
-        )
-    except Exception:
-        logging.exception(
-            "Не удалось показать результат раунда босса "
-            "в чате %s",
-            chat_id,
-        )
+    action_lines = battle.get("battle_log_lines", [])
+    if action_lines:
+        text = "\n".join(action_lines) + "\n\n" + text
+    message_id = await _boss_publish_round_log(context, chat_id, battle, text)
+    if message_id is not None:
+        _boss_schedule_log_delete(context, chat_id, battle, message_id)
 
     if outcome == "victory":
         await asyncio.sleep(2)
+        if ACTIVE_BOSS_BATTLES.get(chat_id) is not battle:
+            return
         await _boss_finish_victory(
             context,
             chat_id,
@@ -2678,6 +2629,8 @@ async def _boss_resolve_round(
 
     if outcome == "defeat":
         await asyncio.sleep(2)
+        if ACTIVE_BOSS_BATTLES.get(chat_id) is not battle:
+            return
         await _boss_finish_defeat(
             context,
             chat_id,
@@ -2686,15 +2639,17 @@ async def _boss_resolve_round(
 
     await asyncio.sleep(BOSS_ROUND_PAUSE)
 
-    current_battle = ACTIVE_BOSS_BATTLES.get(chat_id)
-
-    if not current_battle:
+    if ACTIVE_BOSS_BATTLES.get(chat_id) is not battle:
         return
 
-    await _boss_start_round(
-        context,
-        chat_id,
-    )
+    async with battle["lock"]:
+        if (ACTIVE_BOSS_BATTLES.get(chat_id) is not battle
+                or battle["phase"] != "resolving"):
+            return
+        await _boss_start_round(
+            context,
+            chat_id,
+        )
 
 
 # ------------------------------------------------------------
@@ -2722,6 +2677,15 @@ def _legacy_boss_battle_hero(participants):
 
 
 
+def _boss_next_registration_keyboard():
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            get_text("boss.registration.next_button"),
+            callback_data="boss_reg_next",
+        )
+    ]])
+
+
 async def _boss_send_final_report(
     context,
     chat_id,
@@ -2744,6 +2708,13 @@ async def _boss_send_final_report(
         # в красивой статистике.
         text = get_text("boss.report.fallback")
 
+    narrative = getattr(text, "narrative", None)
+    if battle.get("battle_id") and narrative is not None:
+        try:
+            update_boss_result_narrative(chat_id, battle["battle_id"], narrative)
+        except Exception:
+            logging.exception("Не удалось сохранить летопись боя с боссом в чате %s", chat_id)
+
     try:
         item_loot_text = _maybe_award_boss_item(chat_id, battle)
     except Exception:
@@ -2751,6 +2722,16 @@ async def _boss_send_final_report(
     else:
         if item_loot_text is not None:
             text += f"\n\n{item_loot_text}"
+            if battle.get("battle_id") and battle.get("_final_item_loot"):
+                try:
+                    update_boss_result_loot(
+                        chat_id, battle["battle_id"], battle["_final_item_loot"],
+                    )
+                except Exception:
+                    logging.exception(
+                        "Не удалось сохранить предмет после боя с боссом в чате %s",
+                        chat_id,
+                    )
 
     chunks = []
     current = ""
@@ -2782,6 +2763,8 @@ async def _boss_send_final_report(
     if not chunks:
         chunks = [text]
 
+    registration_button = _boss_next_registration_keyboard()
+
     first_message_id = battle.get("message_id")
 
     try:
@@ -2790,6 +2773,7 @@ async def _boss_send_final_report(
             message_id=first_message_id,
             text=chunks[0],
             parse_mode="HTML",
+            reply_markup=registration_button if len(chunks) == 1 else None,
         )
     except Exception:
         logging.exception(
@@ -2803,6 +2787,7 @@ async def _boss_send_final_report(
                 chat_id=chat_id,
                 text=chunks[0],
                 parse_mode="HTML",
+                reply_markup=registration_button if len(chunks) == 1 else None,
             )
         except Exception:
             logging.exception(
@@ -2811,12 +2796,13 @@ async def _boss_send_final_report(
                 chat_id,
             )
 
-    for chunk in chunks[1:]:
+    for index, chunk in enumerate(chunks[1:], start=1):
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=chunk,
                 parse_mode="HTML",
+                reply_markup=registration_button if index == len(chunks) - 1 else None,
             )
         except Exception:
             logging.exception(
@@ -2831,18 +2817,32 @@ async def _boss_send_final_report(
 # ПОБЕДА
 # ------------------------------------------------------------
 
+def _persist_boss_finish_snapshot(chat_id: int, battle: dict, *, victory: bool) -> None:
+    """Store the resolved outcome before the live battle leaves memory."""
+    if not battle.get("battle_id"):
+        return
+    boss_id = _boss_catalog_id(battle["boss"])
+    if boss_id is None:
+        logging.warning("Unknown boss catalog entry in finished battle %s", battle["battle_id"])
+        return
+    try:
+        save_boss_result(build_boss_result(
+            chat_id, battle, boss_id, BOSS_REQUIRED_HITS, victory=victory,
+        ))
+    except Exception:
+        logging.exception("Не удалось сохранить итог боя с боссом в чате %s", chat_id)
+
 async def _boss_finish_victory(
     context,
     chat_id,
 ):
-    battle = ACTIVE_BOSS_BATTLES.pop(
-        chat_id,
-        None,
-    )
+    battle = ACTIVE_BOSS_BATTLES.get(chat_id)
 
     if not battle:
         return
 
+    _persist_boss_finish_snapshot(chat_id, battle, victory=True)
+    ACTIVE_BOSS_BATTLES.pop(chat_id, None)
     _boss_cancel_timer(battle)
 
     try:
@@ -2850,6 +2850,7 @@ async def _boss_finish_victory(
     except Exception:
         logging.exception("Не удалось записать месячную победу над боссом в чате %s", chat_id)
 
+    rewarded_user_ids = []
     for participant in battle["participants"].values():
         if not participant["alive"]:
             continue
@@ -2857,14 +2858,22 @@ async def _boss_finish_victory(
         user_id = participant["tg_user"].id
 
         try:
-            reward_boss_victory(
+            rewarded = reward_boss_victory(
                 user_id=user_id,
                 chat_id=chat_id,
             )
+            if rewarded:
+                rewarded_user_ids.append(user_id)
         except Exception:
             logging.exception(
                 "Ошибка награды за победу над боссом"
             )
+
+    if battle.get("battle_id"):
+        try:
+            update_boss_result_rewards(chat_id, battle["battle_id"], rewarded_user_ids)
+        except Exception:
+            logging.exception("Не удалось сохранить награды боя с боссом в чате %s", chat_id)
 
     try:
         await _boss_send_final_report(
@@ -2889,14 +2898,13 @@ async def _boss_finish_defeat(
     context,
     chat_id,
 ):
-    battle = ACTIVE_BOSS_BATTLES.pop(
-        chat_id,
-        None,
-    )
+    battle = ACTIVE_BOSS_BATTLES.get(chat_id)
 
     if not battle:
         return
 
+    _persist_boss_finish_snapshot(chat_id, battle, victory=False)
+    ACTIVE_BOSS_BATTLES.pop(chat_id, None)
     _boss_cancel_timer(battle)
 
     try:
@@ -2969,23 +2977,32 @@ async def _start_boss_battle(
     chat_id: int,
     include_registrations=False,
 ):
+    lock = _BOSS_START_LOCKS.setdefault(chat_id, asyncio.Lock())
+    async with lock:
+        return await _start_boss_battle_locked(context, chat_id, include_registrations)
+
+
+async def _start_boss_battle_locked(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    include_registrations=False,
+):
     """
     Запускает набор участников на битву с боссом.
 
-    При ежедневном запуске в 13:37 include_registrations=True:
-    все записавшиеся через /boss_reg автоматически становятся
-    участниками, как если бы они сами вступили в набор.
+    include_registrations=True marks the scheduled 13:37 start and applies
+    boss_auto gating. Both scheduled and manual starts consume the same queue.
     """
     if chat_id in ACTIVE_BOSS_BATTLES:
         return False
 
-    registered_rows = (
-        _boss_get_registered_users(chat_id)
-        if include_registrations
-        else []
-    )
+    if include_registrations and not is_module_enabled(chat_id, "boss_auto"):
+        return False
 
     boss = random.choice(BOSSES)
+
+    if include_registrations and not is_module_enabled(chat_id, "boss_auto"):
+        return False
 
     bot_msg = await context.bot.send_message(
         chat_id=chat_id,
@@ -3005,21 +3022,38 @@ async def _start_boss_battle(
         ]),
     )
 
+    # There is no await between the atomic take and publishing the live battle.
+    # Registrations committed after this boundary belong to the following one.
+    registered_rows = _boss_consume_registrations(chat_id)
+
     battle = {
+        "chat_id": chat_id,
+        "battle_id": secrets.token_urlsafe(16),
         "boss": boss,
         "participants": {},
         "hits": 0,
         "round": 0,
         "phase": "join",
         "message_id": bot_msg.message_id,
+        "battle_log_message_id": None,
+        "battle_log_rendered_text": None,
+        "battle_log_lines": [],
         "phase_task": None,
         "lock": asyncio.Lock(),
         "boss_attack": None,
         "boss_block": None,
     }
 
+    logging.info(
+        "BOSS_NEXT_BATTLE_SIGNUP_CONSUMED chat_id=%s battle_id=%s user_ids=%s",
+        chat_id, battle["battle_id"], [row[0] for row in registered_rows],
+    )
+
     for row in registered_rows:
         tg_user = _boss_tg_user_from_registration(row)
+
+        if is_deleted_user(tg_user.id):
+            continue
 
         if tg_user.id in battle["participants"]:
             continue
@@ -3062,10 +3096,12 @@ async def _start_boss_battle(
         except Exception:
             pass
 
+    battle["deadline_at"] = time.time() + BOSS_JOIN_TIMEOUT
     battle["phase_task"] = asyncio.create_task(
         _boss_join_timer(
             context,
             chat_id,
+            battle["battle_id"],
         )
     )
 
@@ -3086,6 +3122,9 @@ async def boss_reg_command(
         or not update.message.chat
     ):
         return
+    if is_deleted_user(update.message.from_user.id):
+        await send_and_schedule(update, context, get_text("gnome_deletion.deleted"))
+        return
 
     chat = update.message.chat
 
@@ -3098,22 +3137,6 @@ async def boss_reg_command(
         return
 
     chat_id = chat.id
-
-    if not _boss_registration_is_open():
-        await send_and_schedule(
-            update,
-            context,
-            get_text("boss.registration.closed"),
-        )
-        return
-
-    if chat_id in ACTIVE_BOSS_BATTLES:
-        await send_and_schedule(
-            update,
-            context,
-            get_text("boss.registration.active"),
-        )
-        return
 
     # Команда участника также означает, что бот должен считать
     # этот чат активным для ежедневного босса.
@@ -3133,14 +3156,14 @@ async def boss_reg_command(
         await send_and_schedule(
             update,
             context,
-            f'{get_text("boss.registration.registered")}\n\n{participant_count_text}',
+            f'{get_text("boss.registration.next_registered")}\n\n{participant_count_text}',
             parse_mode="HTML",
         )
     else:
         await send_and_schedule(
             update,
             context,
-            f'{get_text("boss.registration.already_registered")}\n\n{participant_count_text}',
+            f'{get_text("boss.registration.next_already_registered")}\n\n{participant_count_text}',
             parse_mode="HTML",
         )
 
@@ -3215,8 +3238,8 @@ async def boss_daily_job(context: ContextTypes.DEFAULT_TYPE):
     """
     Ежедневно запускает битву в 13:37.
 
-    Все пользователи, записавшиеся через /boss_reg до 13:37,
-    автоматически становятся участниками. Остальные могут
+    Пользователи из очереди следующего боя автоматически становятся
+    участниками. Остальные могут
     присоединиться через кнопку в течение окна набора.
     """
     chats = set(get_all_chats())
@@ -3227,6 +3250,9 @@ async def boss_daily_job(context: ContextTypes.DEFAULT_TYPE):
     disabled = 0
 
     for chat_id in chats:
+        if not is_module_enabled(chat_id, "boss_auto"):
+            skipped += 1
+            continue
         if chat_id in ACTIVE_BOSS_BATTLES:
             skipped += 1
             continue
@@ -3241,7 +3267,6 @@ async def boss_daily_job(context: ContextTypes.DEFAULT_TYPE):
                 chat_id,
                 include_registrations=True,
             ):
-                _boss_clear_registrations(chat_id)
                 started += 1
             else:
                 skipped += 1
@@ -3274,6 +3299,7 @@ async def boss_daily_job(context: ContextTypes.DEFAULT_TYPE):
 async def _boss_join_timer(
     context,
     chat_id,
+    battle_id=None,
 ):
     try:
         await asyncio.sleep(BOSS_JOIN_TIMEOUT)
@@ -3283,6 +3309,8 @@ async def _boss_join_timer(
     battle = ACTIVE_BOSS_BATTLES.get(chat_id)
 
     if not battle:
+        return
+    if battle_id is not None and battle.get("battle_id") != battle_id:
         return
 
     async with battle["lock"]:
@@ -3304,6 +3332,7 @@ async def _boss_join_timer(
                         boss_name=battle["boss"]["name"],
                     ),
                     parse_mode="HTML",
+                    reply_markup=_boss_next_registration_keyboard(),
                 )
             except Exception:
                 pass

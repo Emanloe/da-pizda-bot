@@ -1,4 +1,4 @@
-"""Chat-scoped wild Huecrab and durable item auto-loot jobs."""
+"""Wild Huecrab events and recoverable Telegram item auto-loot."""
 
 import logging
 import random
@@ -10,26 +10,18 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from config import (
-    HUECRAB_AUTOLOOT_DELAY_SECONDS,
-    HUECRAB_EVENT_CHANCE,
-    HUECRAB_EVENT_DAILY_LIMIT,
-    HUECRAB_TAME_CHANCE,
+    HUECRAB_AUTOLOOT_DELAY_SECONDS, HUECRAB_EVENT_CHANCE,
+    HUECRAB_EVENT_DAILY_LIMIT, HUECRAB_TAME_CHANCE,
 )
 from database import (
-    bind_huecrab_event,
-    claim_due_item_for_huecrab,
-    create_huecrab_event,
-    discard_unpublished_huecrab_event,
-    format_user_title,
-    get_duel_item_event_chat_ids,
-    get_duel_dwarf_name,
-    has_active_huecrab_event,
-    list_due_huecrab_item_events,
-    list_unannounced_huecrab_claims,
-    mark_huecrab_claim_announced,
-    tame_huecrab_event,
+    bind_huecrab_event, claim_due_item_for_huecrab, create_huecrab_event,
+    discard_unpublished_huecrab_event, format_user_title,
+    get_duel_dwarf_name, get_duel_item_event, get_duel_item_event_chat_ids, has_active_huecrab_event,
+    list_due_huecrab_item_events, list_unannounced_huecrab_claims,
+    mark_huecrab_claim_announced, tame_huecrab_event,
 )
-from handlers.duel_items import DUEL_ITEMS, get_duel_item_name
+from handlers.duel_items import get_duel_item_name, roll_generated_item
+from module_settings import is_module_enabled
 from text_resources import get_text
 
 
@@ -39,13 +31,13 @@ HUECRAB_DAILY_SPAWNS: dict[int, tuple[date, int]] = {}
 
 
 async def spawn_huecrab_event(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        return
     today = date.today()
     last_date, count = HUECRAB_DAILY_SPAWNS.get(chat_id, (today, 0))
     if last_date != today:
         count = 0
-    if count >= HUECRAB_EVENT_DAILY_LIMIT:
-        return
-    if has_active_huecrab_event(chat_id):
+    if count >= HUECRAB_EVENT_DAILY_LIMIT or has_active_huecrab_event(chat_id):
         return
     if random.random() >= HUECRAB_EVENT_CHANCE:
         return
@@ -58,15 +50,16 @@ async def spawn_huecrab_event(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
             callback_data=f"{HUECRAB_CALLBACK_PREFIX}{event_id}",
         )
     ]])
+    if not is_module_enabled(chat_id, "duel_random_events"):
+        discard_unpublished_huecrab_event(event_id)
+        return
     try:
         message = await context.bot.send_message(
-            chat_id=chat_id,
-            text=get_text("huecrab.spawn"),
-            parse_mode="HTML",
-            reply_markup=keyboard,
+            chat_id=chat_id, text=get_text("huecrab.spawn"),
+            parse_mode="HTML", reply_markup=keyboard,
         )
         if not bind_huecrab_event(event_id, message.message_id):
-            raise RuntimeError("Could not bind Huecrab event to message")
+            raise RuntimeError("Could not bind Huecrab event to Telegram message")
     except Exception:
         discard_unpublished_huecrab_event(event_id)
         logging.exception("Could not publish Huecrab event %s in chat %s", event_id, chat_id)
@@ -76,11 +69,11 @@ async def spawn_huecrab_event(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
 
 async def huecrab_event_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        chat_ids = get_duel_item_event_chat_ids()
+        chats = get_duel_item_event_chat_ids()
     except Exception:
         logging.exception("Could not enumerate Huecrab event chats")
         return
-    for chat_id in chat_ids:
+    for chat_id in chats:
         try:
             await spawn_huecrab_event(context, chat_id)
         except Exception:
@@ -91,6 +84,10 @@ async def huecrab_tame_callback(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     if not query or not query.from_user or not query.message or not update.effective_chat:
         return
+    from database import is_deleted_user
+    if is_deleted_user(query.from_user.id):
+        await query.answer(get_text("gnome_deletion.deleted"), show_alert=True)
+        return
     try:
         event_id = int(query.data.removeprefix(HUECRAB_CALLBACK_PREFIX))
     except (AttributeError, ValueError):
@@ -98,7 +95,7 @@ async def huecrab_tame_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
     chat_id = update.effective_chat.id
     try:
-        status = tame_huecrab_event(
+        outcome = tame_huecrab_event(
             event_id, chat_id, query.from_user.id, query.message.message_id,
             lambda: random.random() < HUECRAB_TAME_CHANCE,
         )
@@ -106,8 +103,8 @@ async def huecrab_tame_callback(update: Update, context: ContextTypes.DEFAULT_TY
         logging.exception("Huecrab tame failed for event %s", event_id)
         await query.answer(get_text("huecrab.alerts.taken"), show_alert=True)
         return
-    if status in {"taken", "not_registered", "already_owned"}:
-        await query.answer(get_text(f"huecrab.alerts.{status}"), show_alert=True)
+    if outcome in {"taken", "not_registered", "already_owned"}:
+        await query.answer(get_text(f"huecrab.alerts.{outcome}"), show_alert=True)
         return
     await query.answer()
     title = format_user_title({
@@ -117,20 +114,19 @@ async def huecrab_tame_callback(update: Update, context: ContextTypes.DEFAULT_TY
     })
     try:
         await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=query.message.message_id,
-            text=get_text(f"huecrab.result.{status}", user=title),
-            parse_mode="HTML",
-            reply_markup=None,
+            chat_id=chat_id, message_id=query.message.message_id,
+            text=get_text(f"huecrab.result.{outcome}", user=title),
+            parse_mode="HTML", reply_markup=None,
         )
     except Exception:
         logging.exception("Could not edit consumed Huecrab event %s", event_id)
 
 
 def _autoloot_text(claim: dict) -> str:
-    owner = format_user_title(claim["owner"])
-    item = escape(get_duel_item_name(claim["item_id"]))
-    result = get_text("huecrab.autoloot", user=owner, item=item)
+    result = get_text(
+        "huecrab.autoloot", user=format_user_title(claim["owner"]),
+        item=escape(get_duel_item_name(claim["item_id"])),
+    )
     origin = claim.get("origin_text")
     return f"{origin}\n\n{result}" if origin else result
 
@@ -143,9 +139,12 @@ async def huecrab_autoloot_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     for event_id in due:
         try:
+            event = get_duel_item_event(event_id)
+            if event is None or not is_module_enabled(event["chat_id"], "duel_random_events"):
+                continue
             claim_due_item_for_huecrab(
                 event_id, time(), HUECRAB_AUTOLOOT_DELAY_SECONDS,
-                lambda: random.choice(DUEL_ITEMS)["id"], random.choice,
+                roll_generated_item, random.choice,
             )
         except Exception:
             logging.exception("Huecrab auto-loot claim failed for item event %s", event_id)
@@ -156,23 +155,17 @@ async def huecrab_autoloot_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     for claim in pending:
         try:
+            if not is_module_enabled(claim["chat_id"], "duel_random_events"):
+                continue
             await context.bot.edit_message_text(
-                chat_id=claim["chat_id"],
-                message_id=claim["message_id"],
-                text=_autoloot_text(claim),
-                parse_mode="HTML",
-                reply_markup=None,
+                chat_id=claim["chat_id"], message_id=claim["message_id"],
+                text=_autoloot_text(claim), parse_mode="HTML", reply_markup=None,
             )
         except Exception as exc:
             if "message is not modified" not in str(exc).lower():
-                logging.exception(
-                    "Could not announce Huecrab claim for item event %s", claim["event_id"]
-                )
+                logging.exception("Could not announce Huecrab claim %s", claim["event_id"])
                 continue
         try:
             mark_huecrab_claim_announced(claim["event_id"])
         except Exception:
-            logging.exception(
-                "Could not acknowledge Huecrab announcement for item event %s",
-                claim["event_id"],
-            )
+            logging.exception("Could not acknowledge Huecrab announcement %s", claim["event_id"])

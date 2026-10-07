@@ -328,6 +328,35 @@ async def test_send_failure_restores_same_instance_and_frees_slot(temp_database,
 
 
 @pytest.mark.asyncio
+async def test_pocket_drop_pickup_button_stays_until_claim_then_result_is_temporary(
+    temp_database, fake_context, monkeypatch,
+):
+    import database as db
+    from handlers import duel, duel_items
+    from tests.test_duel_items import item_event_update, make_user
+
+    loser = make_user(2, "loser")
+    collector = make_user(3, "collector")
+    db.get_or_create_duel_user(loser, CHAT_ID)
+    db.get_or_create_duel_user(collector, CHAT_ID)
+    instance = db.add_duel_inventory_item(CHAT_ID, loser.id, "vevangel_wing")
+    drop = db.create_duel_item_event_from_inventory(CHAT_ID, loser.id, instance["id"])
+    await duel._publish_duel_drop(fake_context, drop)
+    assert db.get_duel_item_event(drop["event_id"])["claimed"] is False
+    assert fake_context.job_queue.calls == []
+
+    monkeypatch.setattr(duel_items.random, "random", Mock(return_value=1.0))
+    update, _ = item_event_update(CHAT_ID, collector, drop["event_id"])
+    await duel_items.duel_item_event_callback(update, fake_context)
+    assert db.get_duel_item_event(drop["event_id"])["claimed"] is True
+    assert len(fake_context.job_queue.calls) == 1
+    callback, delay, kwargs = fake_context.job_queue.calls[0]
+    assert callback is duel.delete_messages_job
+    assert delay == 60
+    assert kwargs["data"] == {"chat_id": CHAT_ID, "message_ids": [101]}
+
+
+@pytest.mark.asyncio
 async def test_message_binding_failure_deletes_button_and_restores_item(
     temp_database, fake_context, monkeypatch,
 ):
