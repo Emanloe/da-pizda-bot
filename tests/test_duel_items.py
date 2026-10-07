@@ -23,7 +23,7 @@ def make_user(user_id, username, first_name=None):
     )
 
 
-def test_duel_item_catalog_has_valid_extensible_contract():
+def test_duel_item_catalog_has_valid_extensible_contract(temp_database):
     from config import (
         BOSS_ITEM_DROP_CHANCE,
         DUEL_ITEM_DROP_CHANCE,
@@ -429,8 +429,8 @@ async def test_item_event_callback_rejects_invalid_then_claims_once_and_edits_sa
     chat_id = -41
     event_id = db.create_duel_item_event(chat_id)
     db.set_duel_item_event_message(event_id, 777)
-    choice = Mock(return_value=duel_items.DUEL_ITEMS[0])
-    monkeypatch.setattr(duel_items.random, "choice", choice)
+    choice = Mock(return_value=("test_generated_relic", "Тестовая реликвия"))
+    monkeypatch.setattr(duel_items, "roll_generated_item", choice)
     monkeypatch.setattr(duel_items.random, "random", Mock(return_value=1.0))
 
     outsider = make_user(10, "outsider")
@@ -445,14 +445,14 @@ async def test_item_event_callback_rejects_invalid_then_claims_once_and_edits_sa
     update, query = item_event_update(chat_id, claimant, event_id)
     await duel_items.duel_item_event_callback(update, fake_context)
     query.answer.assert_awaited_once_with()
-    choice.assert_called_once_with(duel_items.DUEL_ITEMS)
+    choice.assert_called_once_with()
     assert len(db.get_duel_inventory(chat_id, claimant.id)) == 1
     fake_context.bot.edit_message_text.assert_awaited_once()
     edit = fake_context.bot.edit_message_text.await_args.kwargs
     assert edit["message_id"] == 777
     assert edit["reply_markup"] is None
     assert "&lt;claimant &amp; one&gt;" in edit["text"]
-    assert duel_items.get_duel_item_name(choice.return_value["id"]) in edit["text"]
+    assert duel_items.get_duel_item_name(choice.return_value[0]) in edit["text"]
     assert fake_context.job_queue.calls[0][1] == 60
     assert fake_context.job_queue.calls[0][2]["data"] == {
         "chat_id": chat_id, "message_ids": [777],

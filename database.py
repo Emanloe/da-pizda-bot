@@ -407,6 +407,12 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_duel_inventory_owner
             ON duel_inventory (chat_id, user_id, id)
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS generated_item_names (
+                item_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL
+            )
+        """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS duel_item_events (
@@ -1441,6 +1447,33 @@ def get_duel_dig_attempts(chat_id: int, user_id: int, date_key: str | None = Non
     return row[0] if row else 0
 
 
+def _unpack_generated_item(picked) -> tuple[str, str | None]:
+    """Existing items use an ID; newly generated items provide their name too."""
+    if isinstance(picked, tuple):
+        item_id, name = picked
+        return item_id, name
+    return picked, None
+
+
+def _remember_generated_item(cursor, item_id: str, name: str | None) -> None:
+    if name is None:
+        return
+    cursor.execute(
+        """INSERT INTO generated_item_names (item_id, name)
+           VALUES (?, ?) ON CONFLICT(item_id) DO NOTHING""",
+        (item_id, name),
+    )
+
+
+def get_generated_item_name(item_id: str) -> str | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT name FROM generated_item_names WHERE item_id = ?",
+            (item_id,),
+        ).fetchone()
+    return row[0] if row else None
+
+
 def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, dict | None]:
     """Pay for one dig, and optionally reserve its exact loot, in one transaction."""
     with get_db() as conn:
@@ -1482,7 +1515,9 @@ def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, 
             return "insufficient_points", None
 
         found = roll() < DIG_FIND_CHANCE
-        item_id = item_selector() if found else None
+        item_id, generated_name = (None, None)
+        if found:
+            item_id, generated_name = _unpack_generated_item(item_selector())
         event_id = None
         if found:
             if item_id in ("oiled_vest", "knife"):
@@ -1494,6 +1529,7 @@ def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, 
             if cursor.rowcount != 1:
                 return "active_event", None
             event_id = cursor.lastrowid
+            _remember_generated_item(cursor, item_id, generated_name)
 
         cursor.execute(
             """
@@ -1738,7 +1774,11 @@ def _claim_item_in_transaction(
     )
     if cursor.rowcount != 1:
         return None
-    item_id = fixed_item_id if fixed_item_id is not None else item_selector()
+    if fixed_item_id is not None:
+        item_id, generated_name = fixed_item_id, None
+    else:
+        item_id, generated_name = _unpack_generated_item(item_selector())
+    _remember_generated_item(cursor, item_id, generated_name)
     cursor.execute(
         "INSERT INTO duel_inventory (chat_id, user_id, item_id) VALUES (?, ?, ?)",
         (chat_id, user_id, item_id),

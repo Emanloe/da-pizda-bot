@@ -53,7 +53,7 @@ async def test_pickup_miss_keeps_item_and_dick_across_sources(
     before = _state(claimant.id)
     roll = Mock(return_value=HUEGRYZ_CHANCE)
     monkeypatch.setattr(duel_items.random, "random", roll)
-    monkeypatch.setattr(duel_items.random, "choice", Mock(return_value=duel_items.DUEL_ITEMS[0]))
+    monkeypatch.setattr(duel_items, "roll_generated_item", Mock(return_value=("rat_knuckle", "Крысиный кулак")))
 
     await duel_items.duel_item_event_callback(
         item_event_update(CHAT_ID, claimant, event_id)[0], fake_context
@@ -77,7 +77,7 @@ async def test_hit_changes_only_personal_dick_loss_and_keeps_item(
     monthly_before = db.get_monthly_chat_stats(CHAT_ID, db.moscow_month_key())
     roll = Mock(return_value=0.0)
     monkeypatch.setattr(duel_items.random, "random", roll)
-    monkeypatch.setattr(duel_items.random, "choice", Mock(return_value=duel_items.DUEL_ITEMS[0]))
+    monkeypatch.setattr(duel_items, "roll_generated_item", Mock(return_value=("rat_knuckle", "Крысиный кулак")))
     update, _ = item_event_update(CHAT_ID, claimant, event_id)
 
     await duel_items.duel_item_event_callback(update, fake_context)
@@ -109,7 +109,7 @@ async def test_hit_on_dickless_claimant_is_sad_noop(
     event_id = _event()
     roll = Mock(return_value=0.0)
     monkeypatch.setattr(duel_items.random, "random", roll)
-    monkeypatch.setattr(duel_items.random, "choice", Mock(return_value=duel_items.DUEL_ITEMS[0]))
+    monkeypatch.setattr(duel_items, "roll_generated_item", Mock(return_value=("rat_knuckle", "Крысиный кулак")))
 
     await duel_items.duel_item_event_callback(
         item_event_update(CHAT_ID, claimant, event_id)[0], fake_context
@@ -133,7 +133,7 @@ async def test_unregistered_loser_and_repeated_claim_have_no_huegryz_rng(
     event_id = _event()
     roll = Mock(return_value=1.0)
     monkeypatch.setattr(duel_items.random, "random", roll)
-    monkeypatch.setattr(duel_items.random, "choice", Mock(return_value=duel_items.DUEL_ITEMS[0]))
+    monkeypatch.setattr(duel_items, "roll_generated_item", Mock(return_value=("rat_knuckle", "Крысиный кулак")))
 
     await duel_items.duel_item_event_callback(item_event_update(CHAT_ID, outsider, event_id)[0], fake_context)
     roll.assert_not_called()

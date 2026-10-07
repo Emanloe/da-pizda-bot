@@ -42,6 +42,35 @@ async def session_for(client, chat_id, user_id):
 
 
 @pytest.mark.asyncio
+async def test_generated_inventory_name_matches_telegram_and_survives_restart(temp_database):
+    from handlers.duel_items import format_duel_display_inventory
+
+    register(CHAT_A, 101, "hero")
+    with database.get_db() as conn:
+        conn.execute(
+            "INSERT INTO generated_item_names (item_id, name) VALUES (?, ?)",
+            ("generated_relic", "Русская реликвия"),
+        )
+    database.add_duel_inventory_item(CHAT_A, 101, "generated_relic")
+    database.add_duel_inventory_item(CHAT_A, 101, "generated_relic")
+    database.init_db()
+
+    telegram_inventory = format_duel_display_inventory(
+        database.get_duel_inventory(CHAT_A, 101)
+    )
+    assert "Русская реликвия" in telegram_inventory
+    api = create_miniapp_api(bot_token=TEST_BOT_TOKEN, allowed_origin="")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api),
+                                 base_url="http://test") as client:
+        headers = await session_for(client, CHAT_A, 101)
+        response = await client.get("/api/v1/me", headers=headers)
+    assert response.status_code == 200
+    assert {"item_id": "generated_relic", "name": "Русская реликвия", "count": 2} in (
+        response.json()["inventory"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_active_read_exposes_server_clock_without_changing_body_or_deadline(
     temp_database, monkeypatch,
 ):

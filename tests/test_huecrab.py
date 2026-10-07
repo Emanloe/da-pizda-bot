@@ -339,11 +339,14 @@ async def test_scheduled_and_dig_items_start_clock_only_after_send(
         assert len(rows) == 2 and all(row[2] and row[3] for row in rows)
         conn.execute("UPDATE duel_item_events SET published_at = 1000 WHERE chat_id IN (-118, -119)")
     monkeypatch.setattr(huecrab.random, "random", Mock(side_effect=AssertionError("Huegryz rolled")))
+    generated = Mock(return_value=("test_generated_crab", "Тестовая добыча"))
+    monkeypatch.setattr(huecrab, "roll_generated_item", generated)
     monkeypatch.setattr(huecrab, "time", lambda: 1020)
     await huecrab.huecrab_autoloot_job(fake_context)
     for event_id, chat_id, _, _ in rows:
         assert db.get_duel_item_event(event_id)["claimed_by"] == 1
         assert len(db.get_duel_inventory(chat_id, 1)) == 1
+    generated.assert_called_once_with()
     assert fake_context.bot.edit_message_text.await_count == 2
     assert all(call.kwargs["reply_markup"] is None for call in
                fake_context.bot.edit_message_text.await_args_list)

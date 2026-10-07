@@ -56,5 +56,6 @@
   {"id": "miners_lunch_fossil", "name": "Окаменевший обед шахтёра"},
   {"id": "green_pimple", "name": "Зеленая пимпочка"},
   {"id": "cheesestool", "name": "Чизистул"},
-  {"id": "ural_mountain_parmesan", "name": "Уральский горный пармезан"}
+  {"id": "ural_mountain_parmesan", "name": "Уральский горный пармезан"},
+  {"id": "benzin_psiop", "name": "Бензиновый псиоп"}
 ]

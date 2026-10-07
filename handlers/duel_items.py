@@ -23,9 +23,11 @@ from database import (
     get_duel_dwarf_name,
     get_duel_item_event,
     get_duel_item_event_chat_ids,
+    get_generated_item_name,
     set_duel_item_event_message,
 )
 from handlers.duel_messaging import schedule_auto_delete
+from loot.generate import generate
 from text_resources import get_text, get_text_list, get_text_mapping
 
 
@@ -85,8 +87,23 @@ DUEL_ITEM_NAMES = {
 _DUEL_ITEM_ORDER = {item["id"]: index for index, item in enumerate(DUEL_ITEMS)}
 
 
-def get_duel_item_name(item_id: str) -> str:
-    return DUEL_ITEM_NAMES.get(item_id, get_text("duel.inventory.unknown_item"))
+def roll_generated_item() -> tuple[str, str]:
+    """Retry only IDs reserved by the existing static and special catalog."""
+    for _ in range(8):
+        item = generate(random)
+        if item["item_id"] not in DUEL_ITEM_NAMES:
+            return item["item_id"], item["name"]
+    raise RuntimeError("Generated loot id collided with a reserved item")
+
+
+def get_duel_item_name(item_id: str, *, unknown_fallback: str | None = None) -> str:
+    if item_id in DUEL_ITEM_NAMES:
+        return DUEL_ITEM_NAMES[item_id]
+    generated = get_generated_item_name(item_id)
+    if generated is not None:
+        return generated
+    return (unknown_fallback if unknown_fallback is not None
+            else get_text("duel.inventory.unknown_item"))
 
 
 def get_duel_display_inventory_rows(collectible_instances: list[dict]) -> list[dict]:
@@ -107,7 +124,7 @@ def get_duel_display_inventory_rows(collectible_instances: list[dict]) -> list[d
         {"item_id": item["id"], "name": item["name"], "count": 1}
         for item in BASE_DUEL_ITEMS
     ] + [
-        {"item_id": item_id, "name": DUEL_ITEM_NAMES.get(item_id, item_id),
+        {"item_id": item_id, "name": get_duel_item_name(item_id, unknown_fallback=item_id),
          "count": counts[item_id]}
         for item_id in item_ids
     ]
@@ -243,7 +260,7 @@ async def duel_item_event_callback(
         event_id,
         chat_id,
         query.from_user.id,
-        lambda: random.choice(DUEL_ITEMS)["id"],
+        roll_generated_item,
         lambda: is_module_enabled(chat_id, "duel_random_events")
         and random.random() < HUEGRYZ_CHANCE,
     )

@@ -14,9 +14,9 @@ from database import (
     try_duel_dig,
 )
 from handlers.duel_items import (
-    DUEL_ITEMS,
     DUEL_ITEM_EVENT_CALLBACK_PREFIX,
     get_duel_item_name,
+    roll_generated_item,
 )
 from handlers.duel_messaging import schedule_auto_delete
 from text_resources import get_text
@@ -43,7 +43,7 @@ async def dig_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     try:
         status, dig = try_duel_dig(
             chat_id, user_id, random.random,
-            lambda: random.choice(DUEL_ITEMS)["id"],
+            roll_generated_item,
         )
     except Exception:
         logging.exception("Не удалось провести раскопку в чате %s для %s", chat_id, user_id)

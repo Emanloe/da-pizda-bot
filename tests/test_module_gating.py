@@ -122,9 +122,17 @@ async def test_existing_item_can_be_claimed_without_huegryz_roll(
     claimant = make_user(1, "claimant")
     db.get_or_create_duel_user(claimant, chat_id)
     event_id = db.create_duel_item_event(chat_id)
+    with db.get_db() as conn:
+        conn.execute(
+            "UPDATE duel_item_events SET item_id = ? WHERE event_id = ?",
+            (duel_items.DUEL_ITEMS[0]["id"], event_id),
+        )
     assert db.set_duel_item_event_message(event_id, 777)
     set_module_enabled(chat_id, "duel_random_events", False, 42)
-    monkeypatch.setattr(duel_items.random, "choice", Mock(return_value=duel_items.DUEL_ITEMS[0]))
+    monkeypatch.setattr(
+        duel_items, "roll_generated_item",
+        Mock(side_effect=AssertionError("fixed item was regenerated")),
+    )
     roll = Mock(side_effect=AssertionError("Huegryz consumed RNG while OFF"))
     monkeypatch.setattr(duel_items.random, "random", roll)
 

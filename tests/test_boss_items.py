@@ -56,7 +56,7 @@ def test_boss_loot_miss_does_not_select_survivor_or_item(monkeypatch):
 
 
 def test_boss_loot_hit_selects_one_living_survivor_then_full_catalog(monkeypatch):
-    from handlers import duel
+    from handlers import duel, duel_items
 
     living = participant(1, title="<living & dwarf>")
     dead = participant(2, alive=False, title="dead")
@@ -68,6 +68,8 @@ def test_boss_loot_hit_selects_one_living_survivor_then_full_catalog(monkeypatch
         return values[0]
 
     add = Mock(return_value={"id": 99})
+    generated = Mock(side_effect=AssertionError("boss used generated loot"))
+    monkeypatch.setattr(duel_items, "roll_generated_item", generated)
     monkeypatch.setattr(duel, "DUEL_ITEMS", catalog)
     monkeypatch.setattr(duel.random, "random", Mock(return_value=0.0))
     monkeypatch.setattr(duel.random, "choice", choose)
@@ -76,6 +78,7 @@ def test_boss_loot_hit_selects_one_living_survivor_then_full_catalog(monkeypatch
     text = duel._maybe_award_boss_item(-3, battle(living, dead))
 
     assert choices == [[living], catalog]
+    generated.assert_not_called()
     add.assert_called_once_with(-3, living["tg_user"].id, "unsafe")
     assert text == (
         "<b>В брюхе босса нашли:</b> &lt;loot &amp; relic&gt;\n"

@@ -164,20 +164,20 @@ async def test_hit_uses_common_catalog_and_publishes_exact_item_without_auto_awa
 ):
     import database as db
     from handlers import dig
-    from handlers.duel_items import BASE_DUEL_ITEM_IDS, DUEL_ITEMS
+    from handlers.duel_items import BASE_DUEL_ITEM_IDS
 
     register(db, points=50, username="<Eman&>")
     db.set_duel_dwarf_name_once(CHAT_ID, 1, "<Гном>")
-    selected = DUEL_ITEMS[-1]
+    selected = ("test_generated_dig", "Тестовая находка")
     roll = Mock(return_value=0.0)
     choice = Mock(return_value=selected)
     monkeypatch.setattr(dig.random, "random", roll)
-    monkeypatch.setattr(dig.random, "choice", choice)
+    monkeypatch.setattr(dig, "roll_generated_item", choice)
     await dig.dig_command(update(user(1)), fake_context)
 
     roll.assert_called_once_with()
-    choice.assert_called_once_with(DUEL_ITEMS)
-    assert selected["id"] not in BASE_DUEL_ITEM_IDS
+    choice.assert_called_once_with()
+    assert selected[0] not in BASE_DUEL_ITEM_IDS
     assert points(db) == 40
     assert db.get_duel_dig_attempts(CHAT_ID, 1, TODAY) == 1
     assert db.get_duel_inventory(CHAT_ID, 1) == []
@@ -190,7 +190,8 @@ async def test_hit_uses_common_catalog_and_publishes_exact_item_without_auto_awa
     assert button.text == "Подобрать"
     event_id = int(button.callback_data.removeprefix("duel_item_claim_"))
     event = db.get_duel_item_event(event_id)
-    assert event["item_id"] == selected["id"]
+    assert event["item_id"] == selected[0]
+    assert db.get_generated_item_name(selected[0]) == selected[1]
     assert event["message_id"] == 101
     assert event["claimed"] is False
     assert db.get_monthly_chat_stats(CHAT_ID, "2026-09") == {
@@ -212,11 +213,11 @@ async def test_existing_callback_awards_found_item_to_first_registered_claimant(
     digger = register(db, 1)
     other = register(db, 2)
     monkeypatch.setattr(dig.random, "random", Mock(return_value=0.0))
-    monkeypatch.setattr(dig.random, "choice", Mock(return_value=duel_items.DUEL_ITEMS[0]))
+    monkeypatch.setattr(dig, "roll_generated_item", Mock(return_value=("test_generated_dig", "Тестовая находка")))
     await dig.dig_command(update(digger), fake_context)
     callback_data = fake_context.bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard[0][0].callback_data
     event_id = int(callback_data.removeprefix(duel_items.DUEL_ITEM_EVENT_CALLBACK_PREFIX))
-    monkeypatch.setattr(duel_items.random, "choice", Mock(side_effect=AssertionError("fixed loot rerolled")))
+    monkeypatch.setattr(duel_items, "roll_generated_item", Mock(side_effect=AssertionError("fixed loot rerolled")))
     outsider_update, outsider_query = item_event_update(CHAT_ID, user(3), event_id)
     await duel_items.duel_item_event_callback(outsider_update, fake_context)
     outsider_query.answer.assert_awaited_once_with("Сначала стань гномом.", show_alert=True)
@@ -225,7 +226,7 @@ async def test_existing_callback_awards_found_item_to_first_registered_claimant(
     await duel_items.duel_item_event_callback(callback, fake_context)
     query.answer.assert_awaited_once_with()
     assert [item["item_id"] for item in db.get_duel_inventory(CHAT_ID, claimant_id)] == [
-        duel_items.DUEL_ITEMS[0]["id"]
+        "test_generated_dig"
     ]
     assert db.get_duel_item_event(event_id)["claimed"] is True
     loser = other if claimant_id == 1 else digger
@@ -506,9 +507,9 @@ async def test_dig_find_deletes_only_command_and_preserves_pickup_message(
 
     register(db)
     roll = Mock(return_value=0.0)
-    choice = Mock(return_value=duel_items.DUEL_ITEMS[0])
+    choice = Mock(return_value=("test_generated_dig", "Тестовая находка"))
     monkeypatch.setattr(dig.random, "random", roll)
-    monkeypatch.setattr(dig.random, "choice", choice)
+    monkeypatch.setattr(dig, "roll_generated_item", choice)
     await dig.dig_command(update(user(1)), fake_context)
 
     assert fake_context.job_queue.calls == [(
@@ -523,7 +524,7 @@ async def test_dig_find_deletes_only_command_and_preserves_pickup_message(
     assert db.get_duel_item_event(event_id)["claimed"] is False
     assert db.get_duel_item_event(event_id)["message_id"] == 101
     roll.assert_called_once_with()
-    choice.assert_called_once_with(duel_items.DUEL_ITEMS)
+    choice.assert_called_once_with()
 
 
 @pytest.mark.asyncio

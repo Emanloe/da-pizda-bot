@@ -20,7 +20,7 @@ from database import (
     list_due_huecrab_item_events, list_unannounced_huecrab_claims,
     mark_huecrab_claim_announced, tame_huecrab_event,
 )
-from handlers.duel_items import DUEL_ITEMS, get_duel_item_name
+from handlers.duel_items import get_duel_item_name, roll_generated_item
 from text_resources import get_text
 from module_settings import is_module_enabled
 
@@ -144,7 +144,7 @@ async def huecrab_autoloot_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 continue
             claim_due_item_for_huecrab(
                 event_id, time(), HUECRAB_AUTOLOOT_DELAY_SECONDS,
-                lambda: random.choice(DUEL_ITEMS)["id"], random.choice,
+                roll_generated_item, random.choice,
             )
         except Exception:
             logging.exception("Huecrab auto-loot claim failed for item event %s", event_id)
