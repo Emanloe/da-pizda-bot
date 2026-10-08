@@ -1808,8 +1808,9 @@ def list_due_huecrab_item_events(now: float, delay_seconds: int) -> list[int]:
 
 def claim_due_item_for_huecrab(
     event_id: int, now: float, delay_seconds: int, item_selector, owner_selector,
+    winner_selector=None,
 ) -> tuple[str, dict | None]:
-    """Select a chat owner and claim under the same SQLite write lock as manual pickup."""
+    """Claim loot and, when two pets are eligible, resolve their battle atomically."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
@@ -1833,18 +1834,41 @@ def claim_due_item_for_huecrab(
         ).fetchall()
         if not owners:
             return "no_owners", None
-        owner = owners[0] if len(owners) == 1 else owner_selector(owners)
+        loser = None
+        if len(owners) == 1:
+            owner = owners[0]
+        else:
+            first = owner_selector(owners)
+            remaining = [candidate for candidate in owners if candidate[0] != first[0]]
+            if len(remaining) != len(owners) - 1:
+                raise ValueError("Huecrab candidate is not an eligible owner")
+            second = remaining[0] if len(remaining) == 1 else owner_selector(remaining)
+            pair = (first, second)
+            selected = (winner_selector or random.choice)(pair)
+            if selected[0] == first[0]:
+                owner, loser = first, second
+            elif selected[0] == second[0]:
+                owner, loser = second, first
+            else:
+                raise ValueError("Huecrab winner is not a battle participant")
         user_id, username, display_name, dwarf_name = owner
         instance = _claim_item_in_transaction(
             cursor, event_id, chat_id, user_id, fixed_item_id, item_selector,
         )
         if instance is None:
             return "unavailable", None
+        if loser is not None:
+            cursor.execute(
+                "DELETE FROM huecrab_owners WHERE chat_id = ? AND user_id = ?",
+                (chat_id, loser[0]),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Huecrab loser no longer owns a pet")
         cursor.execute(
             "UPDATE duel_item_events SET autoloot_claimed = 1 WHERE event_id = ?",
             (event_id,),
         )
-        return "claimed", {
+        claim = {
             **instance, "event_id": event_id, "message_id": message_id,
             "origin_text": origin_text,
             "owner": {
@@ -1852,6 +1876,12 @@ def claim_due_item_for_huecrab(
                 "display_name": display_name, "dwarf_name": dwarf_name,
             },
         }
+        if loser is not None:
+            claim["loser"] = {
+                "user_id": loser[0], "username": loser[1],
+                "display_name": loser[2], "dwarf_name": loser[3],
+            }
+        return "claimed", claim
 
 
 def list_unannounced_huecrab_claims() -> list[dict]:
@@ -1889,6 +1919,20 @@ def has_huecrab(chat_id: int, user_id: int) -> bool:
         return conn.execute(
             "SELECT 1 FROM huecrab_owners WHERE chat_id = ? AND user_id = ?",
             (chat_id, user_id),
+        ).fetchone() is not None
+
+
+def has_eligible_huecrab_tamer(chat_id: int) -> bool:
+    """A registered, non-deleted gnome in this chat does not own a pet yet."""
+    with get_db() as conn:
+        return conn.execute(
+            """SELECT 1 FROM duel_users AS u WHERE u.chat_id = ?
+               AND NOT EXISTS (SELECT 1 FROM deleted_users AS d
+                               WHERE d.user_id = u.user_id)
+               AND NOT EXISTS (SELECT 1 FROM huecrab_owners AS h
+                               WHERE h.chat_id = u.chat_id AND h.user_id = u.user_id)
+               LIMIT 1""",
+            (chat_id,),
         ).fetchone() is not None
 
 

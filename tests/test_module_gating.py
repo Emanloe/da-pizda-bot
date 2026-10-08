@@ -55,6 +55,7 @@ async def test_late_disable_prevents_new_event_publication(
     discarded.assert_called_once_with(99)
 
     monkeypatch.setattr(huecrab, "has_active_huecrab_event", lambda _: False)
+    monkeypatch.setattr(huecrab, "has_eligible_huecrab_tamer", lambda _: True)
     huecrab.HUECRAB_DAILY_SPAWNS.pop(-1, None)
     monkeypatch.setattr(huecrab, "create_huecrab_event", lambda _: 88)
     discarded_crab = Mock()
