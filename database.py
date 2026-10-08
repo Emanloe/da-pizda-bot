@@ -11,6 +11,12 @@ from text_resources import get_text
 
 DB_NAME = "bot_database.db"
 BIRTHDAY_COOLDOWN = timedelta(days=365)
+GENERATED_EQUIPMENT_SLOTS = {
+    "оружие": "weapon", "верхняя одежда": "outerwear",
+    "одежда": "clothing", "головной убор": "head",
+    "пах": "groin", "обувь": "footwear",
+}
+PROTECTIVE_ZONE_SLOTS = {"head": "head", "body": "clothing", "dick": "groin"}
 
 
 def _utc_now() -> datetime:
@@ -93,7 +99,8 @@ def _purge_gnome_in_transaction(cursor, user_id: int) -> None:
                    (user_id, user_id))
     for table, column in (
         ("users", "user_id"), ("duel_users", "user_id"),
-        ("duel_inventory", "user_id"), ("huecrab_owners", "user_id"),
+        ("duel_equipment", "user_id"), ("duel_inventory", "user_id"),
+        ("huecrab_owners", "user_id"),
         ("duel_dig_daily", "user_id"),
         ("miniapp_launch_tokens", "user_id"), ("miniapp_sessions", "user_id"),
         ("elite_ball_activations", "user_id"),
@@ -410,8 +417,34 @@ def init_db():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS generated_item_names (
                 item_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL
+                name TEXT NOT NULL,
+                kind TEXT,
+                base_form TEXT
             )
+        """)
+        generated_columns = {row[1] for row in cursor.execute(
+            "PRAGMA table_info(generated_item_names)"
+        )}
+        if "kind" not in generated_columns:
+            cursor.execute("ALTER TABLE generated_item_names ADD COLUMN kind TEXT")
+        if "base_form" not in generated_columns:
+            cursor.execute("ALTER TABLE generated_item_names ADD COLUMN base_form TEXT")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS duel_equipment (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                slot TEXT NOT NULL CHECK (slot IN
+                    ('weapon', 'outerwear', 'clothing', 'head', 'groin', 'footwear')),
+                inventory_id INTEGER NOT NULL UNIQUE,
+                PRIMARY KEY (chat_id, user_id, slot)
+            )
+        """)
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS trg_duel_inventory_equipment_delete
+            AFTER DELETE ON duel_inventory
+            BEGIN
+                DELETE FROM duel_equipment WHERE inventory_id = OLD.id;
+            END
         """)
 
         cursor.execute("""
@@ -1209,8 +1242,10 @@ def add_duel_inventory_item(chat_id: int, user_id: int, item_id: str) -> dict:
             """,
             (chat_id, user_id, item_id),
         )
+        instance_id = cursor.lastrowid
+        _auto_equip_generated_in_transaction(cursor, chat_id, user_id, instance_id, item_id)
         return {
-            "id": cursor.lastrowid,
+            "id": instance_id,
             "chat_id": chat_id,
             "user_id": user_id,
             "item_id": item_id,
@@ -1242,6 +1277,76 @@ def get_duel_inventory_in_transaction(cursor, chat_id: int, user_id: int) -> lis
         }
         for row in cursor.fetchall()
     ]
+
+
+def _auto_equip_generated_in_transaction(cursor, chat_id, user_id, inventory_id, item_id):
+    """Equip only a known generated item, using its actual inventory instance."""
+    from handlers.duel_items import DUEL_ITEM_NAMES
+    if item_id in DUEL_ITEM_NAMES:
+        return
+    row = cursor.execute(
+        "SELECT kind FROM generated_item_names WHERE item_id = ?", (item_id,)
+    ).fetchone()
+    slot = GENERATED_EQUIPMENT_SLOTS.get(row[0]) if row else None
+    if slot is None:
+        return
+    cursor.execute(
+        """INSERT INTO duel_equipment (chat_id, user_id, slot, inventory_id)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(chat_id, user_id, slot) DO UPDATE SET inventory_id = excluded.inventory_id""",
+        (chat_id, user_id, slot, inventory_id),
+    )
+
+
+def get_duel_equipment(chat_id: int, user_id: int) -> dict[str, dict]:
+    """Read only valid, owned equipment; old inventory remains unequipped."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT e.slot, i.id, i.item_id, g.name
+               FROM duel_equipment e
+               JOIN duel_inventory i ON i.id = e.inventory_id
+                   AND i.chat_id = e.chat_id AND i.user_id = e.user_id
+               JOIN generated_item_names g ON g.item_id = i.item_id
+               WHERE e.chat_id = ? AND e.user_id = ?""",
+            (chat_id, user_id),
+        ).fetchall()
+    return {slot: {"inventory_id": instance_id, "item_id": item_id, "name": name}
+            for slot, instance_id, item_id, name in rows}
+
+
+def consume_equipped_item_for_hit_in_transaction(cursor, chat_id, user_id, zone):
+    """Consume exactly one protective instance after an otherwise successful hit."""
+    slot = PROTECTIVE_ZONE_SLOTS.get(zone)
+    if slot is None or is_deleted_user_in_transaction(cursor, user_id):
+        return None
+    row = cursor.execute(
+        """SELECT i.id, i.item_id, g.name, g.base_form FROM duel_equipment e
+           JOIN duel_inventory i ON i.id = e.inventory_id
+               AND i.chat_id = e.chat_id AND i.user_id = e.user_id
+           JOIN generated_item_names g ON g.item_id = i.item_id
+           WHERE e.chat_id = ? AND e.user_id = ? AND e.slot = ?
+             AND g.kind = ?""",
+        (chat_id, user_id, slot,
+         {"head": "головной убор", "body": "одежда", "dick": "пах"}[zone]),
+    ).fetchone()
+    if row is None:
+        return None
+    cursor.execute(
+        "DELETE FROM duel_inventory WHERE id = ? AND chat_id = ? AND user_id = ?",
+        (row[0], chat_id, user_id),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError("Equipped inventory instance disappeared during hit")
+    # The inventory DELETE trigger clears the corresponding equipment slot.
+    return {"inventory_id": row[0], "item_id": row[1], "name": row[2],
+            "base_form": row[3]}
+
+
+def consume_equipped_item_for_hit(chat_id: int, user_id: int, zone: str):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        return consume_equipped_item_for_hit_in_transaction(cursor, chat_id, user_id, zone)
 
 
 def remove_duel_inventory_instance(
@@ -1314,6 +1419,7 @@ def transfer_duel_inventory_item_in_transaction(
         """,
         (chat_id, to_user_id, item_id),
     )
+    _auto_equip_generated_in_transaction(cursor, chat_id, to_user_id, cursor.lastrowid, item_id)
     return True
 
 
@@ -1363,6 +1469,11 @@ def create_duel_item_event_from_inventory_in_transaction(
     row = cursor.fetchone()
     if not row or row[0] in ("oiled_vest", "knife"):
         return None
+    equipped = cursor.execute(
+        """SELECT slot FROM duel_equipment
+           WHERE chat_id = ? AND user_id = ? AND inventory_id = ?""",
+        (chat_id, user_id, instance_id),
+    ).fetchone()
 
     cursor.execute(
         "INSERT OR IGNORE INTO duel_item_events (chat_id, item_id) VALUES (?, ?)",
@@ -1383,6 +1494,7 @@ def create_duel_item_event_from_inventory_in_transaction(
         "user_id": user_id,
         "instance_id": instance_id,
         "item_id": row[0],
+        "equipped_slot": equipped[0] if equipped else None,
         "created_at": row[1],
         "profile_reset_at_ms": gnome_profile_reset_at_ms_in_transaction(cursor, user_id),
     }
@@ -1425,6 +1537,12 @@ def restore_unpublished_duel_drop_in_transaction(
             drop["item_id"], drop["created_at"],
         ),
     )
+    if drop.get("equipped_slot") in GENERATED_EQUIPMENT_SLOTS.values():
+        cursor.execute(
+            """INSERT OR IGNORE INTO duel_equipment
+               (chat_id, user_id, slot, inventory_id) VALUES (?, ?, ?, ?)""",
+            (drop["chat_id"], drop["user_id"], drop["equipped_slot"], drop["instance_id"]),
+        )
     cursor.execute(
         "DELETE FROM duel_item_events WHERE event_id = ?",
         (drop["event_id"],),
@@ -1447,21 +1565,29 @@ def get_duel_dig_attempts(chat_id: int, user_id: int, date_key: str | None = Non
     return row[0] if row else 0
 
 
-def _unpack_generated_item(picked) -> tuple[str, str | None]:
+def _unpack_generated_item(picked) -> tuple[str, str | None, str | None, str | None]:
     """Existing items use an ID; newly generated items provide their name too."""
     if isinstance(picked, tuple):
+        if len(picked) == 4:
+            return picked
+        if len(picked) == 3:
+            return (*picked, None)
         item_id, name = picked
-        return item_id, name
-    return picked, None
+        return item_id, name, None, None
+    return picked, None, None, None
 
 
-def _remember_generated_item(cursor, item_id: str, name: str | None) -> None:
+def _remember_generated_item(cursor, item_id: str, name: str | None,
+                             kind: str | None = None,
+                             base_form: str | None = None) -> None:
     if name is None:
         return
     cursor.execute(
-        """INSERT INTO generated_item_names (item_id, name)
-           VALUES (?, ?) ON CONFLICT(item_id) DO NOTHING""",
-        (item_id, name),
+        """INSERT INTO generated_item_names (item_id, name, kind, base_form)
+           VALUES (?, ?, ?, ?) ON CONFLICT(item_id) DO UPDATE SET
+           kind = COALESCE(generated_item_names.kind, excluded.kind),
+           base_form = COALESCE(generated_item_names.base_form, excluded.base_form)""",
+        (item_id, name, kind, base_form),
     )
 
 
@@ -1515,9 +1641,9 @@ def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, 
             return "insufficient_points", None
 
         found = roll() < DIG_FIND_CHANCE
-        item_id, generated_name = (None, None)
+        item_id, generated_name, generated_kind, generated_base_form = (None, None, None, None)
         if found:
-            item_id, generated_name = _unpack_generated_item(item_selector())
+            item_id, generated_name, generated_kind, generated_base_form = _unpack_generated_item(item_selector())
         event_id = None
         if found:
             if item_id in ("oiled_vest", "knife"):
@@ -1529,7 +1655,8 @@ def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, 
             if cursor.rowcount != 1:
                 return "active_event", None
             event_id = cursor.lastrowid
-            _remember_generated_item(cursor, item_id, generated_name)
+            _remember_generated_item(cursor, item_id, generated_name,
+                                     generated_kind, generated_base_form)
 
         cursor.execute(
             """
@@ -1775,16 +1902,19 @@ def _claim_item_in_transaction(
     if cursor.rowcount != 1:
         return None
     if fixed_item_id is not None:
-        item_id, generated_name = fixed_item_id, None
+        item_id, generated_name, generated_kind, generated_base_form = fixed_item_id, None, None, None
     else:
-        item_id, generated_name = _unpack_generated_item(item_selector())
-    _remember_generated_item(cursor, item_id, generated_name)
+        item_id, generated_name, generated_kind, generated_base_form = _unpack_generated_item(item_selector())
+    _remember_generated_item(cursor, item_id, generated_name,
+                             generated_kind, generated_base_form)
     cursor.execute(
         "INSERT INTO duel_inventory (chat_id, user_id, item_id) VALUES (?, ?, ?)",
         (chat_id, user_id, item_id),
     )
+    instance_id = cursor.lastrowid
+    _auto_equip_generated_in_transaction(cursor, chat_id, user_id, instance_id, item_id)
     instance = {
-        "id": cursor.lastrowid,
+        "id": instance_id,
         "chat_id": chat_id,
         "user_id": user_id,
         "item_id": item_id,

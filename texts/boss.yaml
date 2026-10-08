@@ -289,6 +289,7 @@ round:
   block_result:
     survived: 🛡 ЗАБЛОКИРОВАЛ
     dead: 💀 УБИТ
+    absorbed: "🛡 {absorbed_phrase}"
   participant_result: |-
     <b>{title}</b>
     ⚔️ {attack_zone} → {attack_result}

@@ -47,6 +47,7 @@ from database import (
     restore_unpublished_duel_drop,
     set_duel_item_event_message,
     transfer_duel_inventory_item,
+    consume_equipped_item_for_hit,
 )
 from handlers.duel_text import (
     _boss_alive_players,
@@ -70,6 +71,7 @@ from handlers.duel_text import (
     _build_duel_miss_text,
     _build_berserk_text,
     get_round_flavor_text,
+    get_equipment_break_text,
 )
 from handlers.duel_formatting import (
     _boss_phase_text,
@@ -884,6 +886,9 @@ async def _process_block_choice(
     att_title = format_user_title(attacker_data)
     def_title = format_user_title(defender_data)
     resolution = resolve_duel_round(strike_zone, block_zone, random)
+    absorbed_item = (consume_equipped_item_for_hit(
+        chat_id, defender_data["user_id"], strike_zone,
+    ) if resolution.outcome == "hit" else None)
 
     # ========================================================
     # 1. Шанс 1% — самоубийство атаковавшего
@@ -980,7 +985,7 @@ async def _process_block_choice(
     # 3. Сравнение УДАРА и БЛОКА
     # ========================================================
 
-    if resolution.outcome == "block":
+    if resolution.outcome == "block" or absorbed_item:
 
         # Смена ролей.
         _advance_duel_round(duel)
@@ -994,6 +999,14 @@ async def _process_block_choice(
             duel["defender_data"]
         )
 
+        absorbed_phrase = (get_equipment_break_text(absorbed_item)
+                           if absorbed_item else None)
+        round_presentation = (get_text(
+            "duel.round_presentation.absorbed",
+            attacker_title=att_title, attack_phrase=resolution.attack_phrase,
+            target_name=TARGET_NAMES[strike_zone], defender_title=def_title,
+            absorbed_phrase=absorbed_phrase,
+        ) if absorbed_item else None)
         text = _build_duel_block_text(
             att_title,
             def_title,
@@ -1003,6 +1016,7 @@ async def _process_block_choice(
             new_att_title,
             new_def_title,
             MOVE_TIMEOUT,
+            round_presentation=round_presentation,
         )
 
         try:
@@ -2572,6 +2586,9 @@ async def _boss_resolve_round(
         round_result = _apply_boss_round_result(
             battle,
             boss_required_hits(battle),
+            absorb_hit=lambda participant, zone: consume_equipped_item_for_hit(
+                chat_id, participant["tg_user"].id, zone,
+            ),
         )
         results = []
 
@@ -2588,11 +2605,18 @@ async def _boss_resolve_round(
             title = _boss_player_title(participant)
 
             if participant_result["boss_responded"]:
-                block_result = get_text(
-                    "boss.round.block_result.survived"
-                    if participant_result["survived"]
-                    else "boss.round.block_result.dead"
-                )
+                if participant_result.get("absorbed_item"):
+                    block_result = get_text(
+                        "boss.round.block_result.absorbed",
+                        absorbed_phrase=get_equipment_break_text(
+                            participant_result["absorbed_item"]),
+                    )
+                else:
+                    block_result = get_text(
+                        "boss.round.block_result.survived"
+                        if participant_result["survived"]
+                        else "boss.round.block_result.dead"
+                    )
                 results.append(
                     get_text(
                         "boss.round.participant_result",

@@ -117,6 +117,9 @@ templates:
 
     ⏳ У <b>{next_attacker_title}</b> есть {move_timeout} секунд на удар:
 round_presentation:
+  absorbed: |-
+    🛡️ <b>УДАР ПОГЛОЩЁН!</b>
+    <b>{attacker_title}</b> {attack_phrase} в зону ({target_name}), но у <b>{defender_title}</b> {absorbed_phrase}
   miss: |-
     💨 <b>ПРОМАХ!</b>
     <b>{attacker_title}</b> {attack_phrase} в зону ({target_name}), но {miss_phrase}
@@ -214,9 +217,28 @@ inventory:
   empty: пусто
   unknown_item: Неизвестная находка
   counted_item: "{item} ×{count}"
+  equipped_item: "{item} (надето)"
+  equipped_counted_item: "{item} ×{count} (1 надето)"
   base_items:
     oiled_vest: Промасленная жилетка
     knife: Нож
+equipment:
+  title: "🧍 <b>Экипировка</b>"
+  slot: "{label}: {item}"
+  empty: Пусто
+  break:
+    m: "{item_name} остановил удар и порвался"
+    f: "{item_name} остановила удар и порвалась"
+    n: "{item_name} остановило удар и порвалось"
+    pl: "{item_name} остановили удар и порвались"
+    unknown: "Удар остановлен. Предмет уничтожен: {item_name}"
+  slots:
+    weapon: "⚔️ Оружие"
+    outerwear: "🧥 Верхняя одежда"
+    clothing: "👕 Одежда"
+    head: "🎩 Головной убор"
+    groin: "🍆 Пах"
+    footwear: "👞 Обувь"
 top:
   empty: 🏆 Таблица лидеров чата пока пуста.
   sort_by_points: очкам

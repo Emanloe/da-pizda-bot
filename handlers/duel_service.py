@@ -24,6 +24,7 @@ from database import (
     get_duel_user_by_id,
     get_duel_user_by_id_in_transaction,
     get_duel_user_by_username,
+    consume_equipped_item_for_hit_in_transaction,
     gnome_profile_reset_at_ms_in_transaction,
     restore_unpublished_duel_drop_in_transaction,
     transfer_duel_inventory_item_in_transaction,
@@ -65,7 +66,7 @@ from handlers.duel_state import (
 from handlers.duel_text import (
     TARGET_NAMES, _build_berserk_text, _build_duel_block_text,
     _build_duel_miss_text, _plural_rounds, get_duel_round_presentation,
-    get_round_flavor_text,
+    get_round_flavor_text, get_equipment_break_text,
 )
 
 
@@ -704,7 +705,11 @@ def _apply_persistent_block(
     *, timed_out: bool = False,
 ) -> PersistentDuelActionResult:
     round_result = resolve_duel_round(session["attack_zone"], zone, random)
-    terminal = round_result.outcome in ("suicide", "hit")
+    absorbed_item = (consume_equipped_item_for_hit_in_transaction(
+        cursor, chat_id, session["defender_user_id"], session["attack_zone"],
+    ) if round_result.outcome == "hit" else None)
+    outcome = "absorbed" if absorbed_item else round_result.outcome
+    terminal = outcome in ("suicide", "hit")
     block_prompt = get_duel_prompt_for_turn_in_transaction(
         cursor, chat_id, duel_id, "block_prompt", session["turn_id"],
     )
@@ -718,8 +723,9 @@ def _apply_persistent_block(
     # applies a terminal result. It also preserves nonterminal flavor across send failures.
     resolution = {
         "kind": "terminal_resolution" if terminal else "round_resolution",
-        "outcome": round_result.outcome,
-        "outcome_phrase": round_result.outcome_phrase,
+        "outcome": outcome,
+        "outcome_phrase": (get_equipment_break_text(absorbed_item)
+                           if absorbed_item else round_result.outcome_phrase),
         "attack_phrase": round_result.attack_phrase,
         "strike_zone": session["attack_zone"],
         "block_zone": zone,

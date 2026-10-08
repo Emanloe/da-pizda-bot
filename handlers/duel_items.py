@@ -87,12 +87,12 @@ DUEL_ITEM_NAMES = {
 _DUEL_ITEM_ORDER = {item["id"]: index for index, item in enumerate(DUEL_ITEMS)}
 
 
-def roll_generated_item() -> tuple[str, str]:
+def roll_generated_item() -> tuple[str, str, str | None, str | None]:
     """Retry only IDs reserved by the existing static and special catalog."""
     for _ in range(8):
         item = generate(random)
         if item["item_id"] not in DUEL_ITEM_NAMES:
-            return item["item_id"], item["name"]
+            return item["item_id"], item["name"], item.get("kind"), item.get("base_form")
     raise RuntimeError("Generated loot id collided with a reserved item")
 
 
@@ -106,7 +106,8 @@ def get_duel_item_name(item_id: str, *, unknown_fallback: str | None = None) -> 
             else get_text("duel.inventory.unknown_item"))
 
 
-def get_duel_display_inventory_rows(collectible_instances: list[dict]) -> list[dict]:
+def get_duel_display_inventory_rows(collectible_instances: list[dict],
+                                    equipped_instance_ids=frozenset()) -> list[dict]:
     """Permanent base items and grouped collectibles, without changing storage."""
     counts = Counter(
         instance["item_id"]
@@ -120,7 +121,7 @@ def get_duel_display_inventory_rows(collectible_instances: list[dict]) -> list[d
             item_id,
         ),
     )
-    return [
+    rows = [
         {"item_id": item["id"], "name": item["name"], "count": 1}
         for item in BASE_DUEL_ITEMS
     ] + [
@@ -128,15 +129,26 @@ def get_duel_display_inventory_rows(collectible_instances: list[dict]) -> list[d
          "count": counts[item_id]}
         for item_id in item_ids
     ]
+    equipped_item_ids = {instance["item_id"] for instance in collectible_instances
+                         if instance.get("id") in equipped_instance_ids}
+    for row in rows:
+        if row["item_id"] in equipped_item_ids:
+            row["equipped_count"] = 1
+    return rows
 
 
-def format_duel_display_inventory(collectible_instances: list[dict]) -> str:
+def format_duel_display_inventory(collectible_instances: list[dict],
+                                  equipped_instance_ids=frozenset()) -> str:
     """Format permanent base items followed by stored collectible instances."""
     formatted = []
-    for item in get_duel_display_inventory_rows(collectible_instances):
+    for item in get_duel_display_inventory_rows(collectible_instances, equipped_instance_ids):
         name = escape(get_duel_item_name(item["item_id"]))
         count = item["count"]
         formatted.append(
+            get_text("duel.inventory.equipped_counted_item", item=name, count=count)
+            if item.get("equipped_count") and count > 1 else
+            get_text("duel.inventory.equipped_item", item=name)
+            if item.get("equipped_count") else
             get_text("duel.inventory.counted_item", item=name, count=count)
             if count > 1
             else name

@@ -22,6 +22,14 @@ BERSERK_ALREADY_STOLEN = get_text_list("duel.berserk.already_stolen")
 _BOSS_PHASE_STATUSES = get_text_mapping("duel.boss.phase_status")
 
 
+def get_equipment_break_text(item: dict) -> str:
+    """Use the generated base's saved grammatical form, never its display name."""
+    base_form = item.get("base_form")
+    if base_form not in ("m", "f", "n", "pl"):
+        base_form = "unknown"
+    return get_text(f"duel.equipment.break.{base_form}", item_name=escape(item["name"]))
+
+
 def get_huyanie_title(stolen_dicks_count: int) -> str:
     count = int(stolen_dicks_count or 0)
     if count < 10:
@@ -196,6 +204,15 @@ def get_duel_round_presentation(
             defender_title=defender_title,
             block_target=TARGET_NAMES[resolution["block_zone"]],
             hit_phrase=resolution["outcome_phrase"],
+        )
+    if outcome == "absorbed":
+        return get_text(
+            "duel.round_presentation.absorbed",
+            attacker_title=attacker_title,
+            attack_phrase=resolution["attack_phrase"],
+            target_name=TARGET_NAMES[resolution["strike_zone"]],
+            defender_title=defender_title,
+            absorbed_phrase=resolution["outcome_phrase"],
         )
     if outcome not in ("miss", "block"):
         raise ValueError("Unknown resolved duel outcome")

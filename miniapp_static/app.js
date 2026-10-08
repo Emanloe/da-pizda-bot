@@ -20,7 +20,7 @@
   const ZONE_NAMES = { head: "Голова", body: "Торс", dick: "Хуй" };
   const PHASE_NAMES = { attack: "Атака", block: "Блок" };
   const ROLE_NAMES = { attacker: "Атакующий", defender: "Защищающийся", spectator: "Наблюдатель" };
-  const OUTCOME_NAMES = { miss: "Промах", block: "Блок", hit: "Попадание", suicide: "Самопоражение" };
+  const OUTCOME_NAMES = { miss: "Промах", block: "Блок", hit: "Попадание", suicide: "Самопоражение", absorbed: "Удар поглощён" };
 
   let sessionToken = null;
   let currentView = "home";
@@ -229,6 +229,13 @@
       dataCell("Статус на сегодня", data.dick_status?.text || "—")
     );
     content.append(status);
+    addHeading(content, "Экипировка");
+    const equipment = element("div", "data-grid equipment-grid");
+    for (const slot of ["weapon", "outerwear", "clothing", "head", "groin", "footwear"]) {
+      const item = data.equipment?.[slot];
+      if (item) equipment.append(dataCell(item.label, item.name));
+    }
+    content.append(equipment);
     addHeading(content, "Инвентарь");
     if (!Array.isArray(data.inventory) || data.inventory.length === 0) {
       content.append(notice("В инвентаре пока нет предметов."));
@@ -236,7 +243,8 @@
       const inventory = element("ul", "inventory-list");
       for (const item of data.inventory) {
         const row = element("li");
-        row.append(element("span", null, item.name || item.item_id), element("strong", null, `×${item.count}`));
+        const worn = item.equipped_count ? " · надето 1" : "";
+        row.append(element("span", null, item.name || item.item_id), element("strong", null, `×${item.count}${worn}`));
         inventory.append(row);
       }
       content.append(inventory);

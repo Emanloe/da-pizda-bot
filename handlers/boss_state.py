@@ -48,7 +48,7 @@ def _record_boss_block_choice(battle, participant, zone):
     )
 
 
-def _apply_boss_round_result(battle, required_hits):
+def _apply_boss_round_result(battle, required_hits, absorb_hit=None):
     boss_attack = battle["boss_attack"]
     boss_block = battle["boss_block"]
     round_results = []
@@ -79,9 +79,13 @@ def _apply_boss_round_result(battle, required_hits):
 
         block = participant["block"]
         survived = block == boss_attack
+        absorbed_item = (absorb_hit(participant, boss_attack)
+                         if not survived and absorb_hit is not None else None)
 
         if survived:
             participant["blocks"] += 1
+        elif absorbed_item:
+            survived = True
         else:
             participant["alive"] = False
             participant["death_round"] = battle["round"]
@@ -89,14 +93,17 @@ def _apply_boss_round_result(battle, required_hits):
             participant["death_defended_zone"] = block
             participant["death_attack_zone"] = attack
 
-        round_results.append({
+        participant_result = {
             "participant": participant,
             "attack": attack,
             "block": block,
             "hit": hit,
             "survived": survived,
             "boss_responded": True,
-        })
+        }
+        if absorbed_item:
+            participant_result["absorbed_item"] = absorbed_item
+        round_results.append(participant_result)
 
     # The round counts for every survivor, including participants skipped after
     # the finishing hit. Previously eliminated participants remain dead.

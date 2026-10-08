@@ -171,7 +171,7 @@ def _round_read_model(session: dict, resolution: dict) -> dict | None:
     defender_id = resolution.get("defender_user_id")
     if (attacker_id not in participants or defender_id not in participants
             or attacker_id == defender_id
-            or resolution.get("outcome") not in ("miss", "block", "hit", "suicide")
+            or resolution.get("outcome") not in ("miss", "block", "hit", "suicide", "absorbed")
             or resolution.get("strike_zone") not in ("head", "body", "dick")
             or resolution.get("block_zone") not in ("head", "body", "dick")
             or type(resolution.get("round_no")) is not int

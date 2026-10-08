@@ -50,4 +50,5 @@ def generate(rng: random.Random | None = None) -> dict:
         "source_id": source["id"],
         "tier": quality["tier"],
         "kind": base["kind"],
+        "base_form": list_key,
     }
