@@ -1430,6 +1430,94 @@ def get_duel_equipment(chat_id: int, user_id: int) -> dict[str, dict]:
             for slot, instance_id, item_id, name in rows}
 
 
+def _active_pvp_participant(cursor, chat_id: int, user_id: int) -> bool:
+    return cursor.execute(
+        """SELECT 1 FROM duel_sessions
+           WHERE chat_id = ? AND status IN ('publishing', 'active')
+             AND (player1_user_id = ? OR player2_user_id = ?) LIMIT 1""",
+        (chat_id, user_id, user_id),
+    ).fetchone() is not None
+
+
+def is_active_pvp_participant(chat_id: int, user_id: int) -> bool:
+    with get_db() as conn:
+        return _active_pvp_participant(conn.cursor(), chat_id, user_id)
+
+
+def list_generated_equipment_instances(chat_id: int, user_id: int, slot: str):
+    """List only this player's actual generated instances for one equipment slot."""
+    kind = next((kind for kind, value in GENERATED_EQUIPMENT_SLOTS.items()
+                 if value == slot), None)
+    if kind is None:
+        return None
+    from handlers.duel_items import DUEL_ITEM_NAMES
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if get_duel_user_by_id_in_transaction(cursor, chat_id, user_id,
+                                              read_only=True) is None:
+            return None
+        rows = cursor.execute(
+            """SELECT i.id, i.item_id, g.name, e.slot
+               FROM duel_inventory i
+               JOIN generated_item_names g ON g.item_id = i.item_id
+               LEFT JOIN duel_equipment e ON e.inventory_id = i.id
+               WHERE i.chat_id = ? AND i.user_id = ? AND g.kind = ?
+               ORDER BY i.id""", (chat_id, user_id, kind),
+        ).fetchall()
+        return [{"inventory_id": instance_id, "name": name,
+                 "equipped": equipped_slot == slot}
+                for instance_id, item_id, name, equipped_slot in rows
+                if item_id not in DUEL_ITEM_NAMES]
+
+
+def change_generated_equipment(chat_id: int, user_id: int, slot: str,
+                               inventory_id: int | None = None) -> str:
+    """Validate and change a slot under the same SQLite write lock as duel start."""
+    kind = next((kind for kind, value in GENERATED_EQUIPMENT_SLOTS.items()
+                 if value == slot), None)
+    if kind is None:
+        return "invalid_slot"
+    from handlers.duel_items import DUEL_ITEM_NAMES
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        if get_duel_user_by_id_in_transaction(cursor, chat_id, user_id,
+                                              read_only=True) is None:
+            return "profile_unavailable"
+        if _active_pvp_participant(cursor, chat_id, user_id):
+            return "active_battle"
+        if inventory_id is None:
+            cursor.execute(
+                "DELETE FROM duel_equipment WHERE chat_id = ? AND user_id = ? AND slot = ?",
+                (chat_id, user_id, slot),
+            )
+            return "unequipped" if cursor.rowcount else "already_empty"
+        row = cursor.execute(
+            """SELECT i.item_id, g.kind FROM duel_inventory i
+               JOIN generated_item_names g ON g.item_id = i.item_id
+               WHERE i.id = ? AND i.chat_id = ? AND i.user_id = ?""",
+            (inventory_id, chat_id, user_id),
+        ).fetchone()
+        if row is None or row[0] in DUEL_ITEM_NAMES:
+            return "item_unavailable"
+        if row[1] != kind:
+            return "wrong_slot"
+        worn = cursor.execute(
+            "SELECT slot FROM duel_equipment WHERE inventory_id = ?",
+            (inventory_id,),
+        ).fetchone()
+        if worn is not None:
+            return "already_equipped" if worn[0] == slot else "wrong_slot"
+        cursor.execute(
+            """INSERT INTO duel_equipment (chat_id, user_id, slot, inventory_id)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(chat_id, user_id, slot)
+               DO UPDATE SET inventory_id = excluded.inventory_id""",
+            (chat_id, user_id, slot, inventory_id),
+        )
+        return "equipped"
+
+
 def consume_equipped_item_for_hit_in_transaction(cursor, chat_id, user_id, zone):
     """Consume exactly one protective instance after an otherwise successful hit."""
     slot = PROTECTIVE_ZONE_SLOTS.get(zone)

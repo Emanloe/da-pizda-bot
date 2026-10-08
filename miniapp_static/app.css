@@ -131,6 +131,16 @@ main { padding: 7px; min-height: 300px; }
 .data-cell { background: var(--surface-raised); padding: 5px 7px; min-width: 0; overflow-wrap: anywhere; }
 .data-cell .label { display: block; color: var(--text-muted); font-size: 10px; margin-bottom: 1px; }
 .data-cell .value { display: block; font-weight: bold; }
+.equipment-slot { border: 0; background: var(--surface-raised); color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.equipment-slot:hover:not(:disabled) { background: var(--button-hover); }
+.equipment-slot:disabled { cursor: default; color: var(--text-muted); }
+.equipment-panel { margin-top: 6px; }
+.equipment-panel:empty { display: none; }
+.equipment-picker { padding: 7px; border: 1px solid var(--border-strong); background: var(--surface-alt); }
+.equipment-picker > strong { display: block; margin-bottom: 6px; }
+.equipment-option { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.equipment-option > span { min-width: 0; }
+.equipment-option > strong { white-space: nowrap; }
 .home-profile { --gnome-size: clamp(125px, 27vw, 200px); display: grid; grid-template-columns: var(--gnome-size) minmax(0, 1fr); gap: 8px; align-items: start; min-width: 0; }
 .gnome-image { display: block; width: var(--gnome-size); height: var(--gnome-size); aspect-ratio: 1 / 1; max-width: 100%; border: 1px solid var(--border-strong); object-fit: contain; image-rendering: pixelated; }
 .home-profile-info { grid-template-columns: minmax(0, 1fr); min-width: 0; }

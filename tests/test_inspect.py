@@ -150,14 +150,16 @@ async def test_inspect_matches_me_and_telegram_stats_without_gameplay_writes(
         inspect_stats = {key: value for key, value in inspect.items()
                          if key != "gnome_image_url"}
         assert inspect_stats == {key: value for key, value in own_me.items()
-                                 if key not in ("gnome_variant", "gnome_image_url")}
+                                 if key not in ("gnome_variant", "gnome_image_url",
+                                                "equipment_management_blocked")}
         assert inspect_stats == public_player_stats(model)
         viewer_inspect = (await client.get("/api/v1/players/101", headers=viewer)).json()
         viewer_me = (await client.get("/api/v1/me", headers=viewer)).json()
         assert {key: value for key, value in viewer_inspect.items()
                 if key != "gnome_image_url"} == {
                     key: value for key, value in viewer_me.items()
-                    if key not in ("gnome_variant", "gnome_image_url")
+                    if key not in ("gnome_variant", "gnome_image_url",
+                                   "equipment_management_blocked")
                 }
     with database.get_db() as conn:
         after = list(conn.execute(

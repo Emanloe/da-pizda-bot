@@ -40,6 +40,7 @@
   let opponentsSnapshot = null;
   let hallSnapshot = null;
   let moveInFlight = false;
+  let equipmentActionInFlight = false;
   const loading = { home: null, opponents: null, duel: null, hall: null, boss: null };
 
   const viewStatuses = { home: null, opponents: null, duel: null, hall: null, boss: null };
@@ -231,11 +232,27 @@
     content.append(status);
     addHeading(content, "Экипировка");
     const equipment = element("div", "data-grid equipment-grid");
+    const equipmentPanel = element("div", "equipment-panel");
+    if (!inspected && data.equipment_management_blocked) {
+      content.append(notice("Управление экипировкой недоступно во время боя."));
+    }
     for (const slot of ["weapon", "outerwear", "clothing", "head", "groin", "footwear"]) {
       const item = data.equipment?.[slot];
-      if (item) equipment.append(dataCell(item.label, item.name));
+      if (!item) continue;
+      if (inspected) {
+        equipment.append(dataCell(item.label, item.name));
+      } else {
+        const button = element("button", "data-cell equipment-slot");
+        button.type = "button";
+        button.append(element("span", "label", item.label),
+          element("span", "value", item.name));
+        button.disabled = Boolean(data.equipment_management_blocked);
+        button.addEventListener("click", () => openEquipmentSlot(slot, item.label, equipmentPanel));
+        equipment.append(button);
+      }
     }
     content.append(equipment);
+    if (!inspected) content.append(equipmentPanel);
     addHeading(content, "Инвентарь");
     if (!Array.isArray(data.inventory) || data.inventory.length === 0) {
       content.append(notice("В инвентаре пока нет предметов."));
@@ -255,6 +272,69 @@
 
   function renderHome(data) {
     renderProfile(data, document.getElementById("home-content"));
+  }
+
+  async function openEquipmentSlot(slot, label, panel) {
+    if (equipmentActionInFlight) return;
+    panel.replaceChildren(notice("Загрузка предметов…"));
+    try {
+      const response = await apiRequest(`/api/v1/equipment/${slot}`);
+      if (!sessionToken) return;
+      const box = element("div", "equipment-picker");
+      box.append(element("strong", null, label));
+      if (response.blocked) {
+        box.append(notice("Управление экипировкой недоступно во время боя."));
+        panel.replaceChildren(box);
+        return;
+      }
+      const worn = response.items.find(item => item.equipped);
+      if (worn) {
+        const remove = element("button", "small-button", "Снять");
+        remove.type = "button";
+        remove.addEventListener("click", () => changeEquipment("unequip", { slot }, panel));
+        box.append(remove);
+      }
+      if (!response.items.length) box.append(notice("Подходящих предметов в инвентаре нет."));
+      for (const item of response.items) {
+        const row = element("div", "equipment-option");
+        row.append(element("span", null, item.name));
+        if (item.equipped) row.append(element("strong", null, "Надето"));
+        else {
+          const equip = element("button", "small-button", "Надеть");
+          equip.type = "button";
+          equip.addEventListener("click", () => changeEquipment("equip", {
+            slot, inventory_id: item.inventory_id,
+          }, panel));
+          row.append(equip);
+        }
+        box.append(row);
+      }
+      panel.replaceChildren(box);
+    } catch (error) {
+      if (error.status === 401) showUnavailable(error.message);
+      else panel.replaceChildren(notice(error.message, true));
+    }
+  }
+
+  async function changeEquipment(action, body, panel) {
+    if (equipmentActionInFlight) return;
+    equipmentActionInFlight = true;
+    try {
+      await apiRequest(`/api/v1/equipment/${action}`, { method: "POST", body });
+      await loadView("home", true);
+    } catch (error) {
+      if (error.status === 401) showUnavailable(error.message);
+      else {
+        panel.replaceChildren(notice(error.message, true));
+        // Refresh the authoritative profile after a stale item or new battle.
+        if (error.status === 409) {
+          await loadView("home", true);
+          setViewStatus("home", error.message, true);
+        }
+      }
+    } finally {
+      equipmentActionInFlight = false;
+    }
   }
 
   async function inspectOpponent(userId, sourceView = "opponents") {

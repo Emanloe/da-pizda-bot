@@ -90,6 +90,8 @@ let bossActionCount = 0;
 let bossActionBodies = [];
 let bossPostMode = "accepted";
 let bossPostRelease = null;
+let equipmentWorn = false;
+let equipmentPosts = 0;
 let bossModel = { battle: null, registration: {
   open: true, participants_count: 0, viewer_registered: false,
 }, viewer: { in_battle: false } };
@@ -111,6 +113,34 @@ const window = {
 };
 const epoch = 1_700_000_000_000;
 const fetch = async (url, options) => {
+  if (url === "/api/v1/me") return {
+    ok: true,
+    headers: { get: name => name === "content-type" ? "application/json" : null },
+    json: async () => ({ ...ownProfile, equipment: {
+      ...ownProfile.equipment,
+      clothing: { label: "👕 Торс", name: equipmentWorn ? "Рубаха" : "Пусто" },
+    } }),
+  };
+  if (url === "/api/v1/equipment/clothing") return {
+    ok: true,
+    headers: { get: name => name === "content-type" ? "application/json" : null },
+    json: async () => ({ slot: "clothing", blocked: false, items: [
+      { inventory_id: 42, name: "Рубаха", equipped: equipmentWorn },
+    ] }),
+  };
+  if (url === "/api/v1/equipment/equip" || url === "/api/v1/equipment/unequip") {
+    assert.equal(options.method, "POST");
+    const body = JSON.parse(options.body);
+    assert.equal(body.slot, "clothing");
+    if (url.endsWith("/equip")) assert.equal(body.inventory_id, 42);
+    equipmentWorn = url.endsWith("/equip");
+    equipmentPosts++;
+    return {
+      ok: true,
+      headers: { get: name => name === "content-type" ? "application/json" : null },
+      json: async () => ({ status: equipmentWorn ? "equipped" : "unequipped" }),
+    };
+  }
   if (url === "/api/v1/boss") {
     assert.equal(options.method, "GET");
     bossFetchCount++;
@@ -763,4 +793,28 @@ async function testPolling() {
   assert.equal(bossFetchCount, beforeBossTick + 1);
 }
 
-testPolling().catch(error => { console.error(error); process.exitCode = 1; });
+async function testEquipment() {
+  app.setContext("test-session", "home");
+  app.renderHome(ownProfile);
+  let grid = findClass(nodes.get("home-content").children[0], "equipment-grid");
+  assert.equal(grid.children[2].tag, "button");
+  await grid.children[2].listeners.click();
+  let picker = nodes.get("home-content").querySelector(".equipment-picker");
+  assert.equal(findClass(picker.children[1], "small-button").textContent, "Надеть");
+  await findClass(picker.children[1], "small-button").listeners.click();
+  assert.equal(equipmentPosts, 1);
+  grid = findClass(nodes.get("home-content").children[0], "equipment-grid");
+  assert.equal(grid.children[2].children[1].textContent, "Рубаха");
+  await grid.children[2].listeners.click();
+  picker = nodes.get("home-content").querySelector(".equipment-picker");
+  assert.equal(picker.children[1].textContent, "Снять");
+  await picker.children[1].listeners.click();
+  assert.equal(equipmentPosts, 2);
+  grid = findClass(nodes.get("home-content").children[0], "equipment-grid");
+  assert.equal(grid.children[2].children[1].textContent, "Пусто");
+  app.renderHome({ ...ownProfile, equipment_management_blocked: true });
+  grid = findClass(nodes.get("home-content").children[0], "equipment-grid");
+  assert.ok(grid.children.every(button => button.disabled));
+}
+
+testPolling().then(testEquipment).catch(error => { console.error(error); process.exitCode = 1; });

@@ -25,7 +25,8 @@ from telegram import Bot, User
 from config import BOT_TOKEN
 from database import (
     format_user_title, format_user_title_plain, get_duel_top_read_model,
-    get_duel_user_by_id,
+    get_duel_user_by_id, change_generated_equipment,
+    is_active_pvp_participant, list_generated_equipment_instances,
 )
 from gnome_avatars import (
     DEFAULT_GNOME_VARIANT, GNOME_FILE_IDS, GNOME_VARIANTS,
@@ -114,6 +115,20 @@ class BossJoinRequest(BaseModel):
 class BossActionRequest(BossJoinRequest):
     phase: Literal["attack", "block"]
     action_id: str
+
+
+EquipmentSlot = Literal["weapon", "outerwear", "clothing", "head", "groin", "footwear"]
+
+
+class EquipItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    slot: EquipmentSlot
+    inventory_id: StrictInt = Field(gt=0)
+
+
+class UnequipItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    slot: EquipmentSlot
 
 
 _BOSS_FAILURES = {
@@ -411,12 +426,59 @@ def create_miniapp_api(*, bot_token: str | None = None,
                 )
         return {"session_token": issued.token, "expires_at": issued.session.expires_at}
 
+    async def equipment_blocked(chat_id: int, user_id: int) -> bool:
+        from handlers import duel
+        start_lock = duel._BOSS_START_LOCKS.setdefault(chat_id, asyncio.Lock())
+        async with start_lock:
+            battle = duel.ACTIVE_BOSS_BATTLES.get(chat_id)
+            if battle is not None:
+                async with battle["lock"]:
+                    if user_id in battle["participants"]:
+                        return True
+            return await run_in_threadpool(is_active_pvp_participant, chat_id, user_id)
+
+    async def change_equipment(chat_id: int, user_id: int, slot: str,
+                               inventory_id: int | None) -> str:
+        # Boss start publishes participants under this lock; joins use battle.lock.
+        # Hold both across the SQLite mutation. PvP start shares BEGIN IMMEDIATE.
+        from handlers import duel
+        start_lock = duel._BOSS_START_LOCKS.setdefault(chat_id, asyncio.Lock())
+        async with start_lock:
+            battle = duel.ACTIVE_BOSS_BATTLES.get(chat_id)
+            if battle is not None:
+                async with battle["lock"]:
+                    if user_id in battle["participants"]:
+                        return "active_battle"
+                    return await run_in_threadpool(
+                        change_generated_equipment, chat_id, user_id, slot, inventory_id,
+                    )
+            return await run_in_threadpool(
+                change_generated_equipment, chat_id, user_id, slot, inventory_id,
+            )
+
+    def equipment_response(reason: str) -> dict:
+        failures = {
+            "active_battle": (409, "Во время боя менять экипировку нельзя."),
+            "profile_unavailable": (403, "Профиль в этом чате недоступен."),
+            "item_unavailable": (409, "Предмет больше недоступен. Обновите список."),
+            "wrong_slot": (409, "Предмет не подходит для этого слота."),
+            "invalid_slot": (422, "Недопустимый слот."),
+        }
+        if reason in failures:
+            status, message = failures[reason]
+            raise HTTPException(status_code=status, detail={
+                "code": reason, "message": message,
+            })
+        return {"status": reason}
+
     @app.get("/api/v1/me")
-    def me(session: MiniAppSession = Depends(require_session)):
-        model = player_stats_read_model(session.chat_id, session.user_id)
+    async def me(session: MiniAppSession = Depends(require_session)):
+        model = await run_in_threadpool(player_stats_read_model,
+                                        session.chat_id, session.user_id)
         if model is None:
             raise HTTPException(status_code=404, detail="Player not found")
-        variant = get_or_assign_gnome_variant(session.chat_id, session.user_id)
+        variant = await run_in_threadpool(get_or_assign_gnome_variant,
+                                          session.chat_id, session.user_id)
         if variant is None:
             raise HTTPException(status_code=404, detail="Player not found")
         display_variant = variant
@@ -428,7 +490,34 @@ def create_miniapp_api(*, bot_token: str | None = None,
             **public_player_stats(model),
             "gnome_variant": variant,
             "gnome_image_url": gnome_image_url(display_variant),
+            "equipment_management_blocked": await equipment_blocked(
+                session.chat_id, session.user_id,
+            ),
         }
+
+    @app.get("/api/v1/equipment/{slot}")
+    async def equipment_items(slot: EquipmentSlot,
+                              session: MiniAppSession = Depends(require_session)):
+        items = await run_in_threadpool(list_generated_equipment_instances,
+                                        session.chat_id, session.user_id, slot)
+        if items is None:
+            return equipment_response("profile_unavailable")
+        return {"slot": slot, "items": items,
+                "blocked": await equipment_blocked(session.chat_id, session.user_id)}
+
+    @app.post("/api/v1/equipment/equip")
+    async def equip_item(request: EquipItemRequest,
+                         session: MiniAppSession = Depends(require_session)):
+        return equipment_response(await change_equipment(
+            session.chat_id, session.user_id, request.slot, request.inventory_id,
+        ))
+
+    @app.post("/api/v1/equipment/unequip")
+    async def unequip_item(request: UnequipItemRequest,
+                           session: MiniAppSession = Depends(require_session)):
+        return equipment_response(await change_equipment(
+            session.chat_id, session.user_id, request.slot, None,
+        ))
 
     @app.get("/api/v1/players/{target_user_id}")
     def inspect_player(target_user_id: int,

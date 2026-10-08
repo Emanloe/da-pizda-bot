@@ -312,12 +312,15 @@ async def test_asset_content_change_rotates_app_urls_without_release_constant(tm
             assert response.headers["cache-control"] == "no-store"
 
 
-def test_frontend_has_only_session_duel_and_boss_posts():
+def test_frontend_routes_include_authorized_equipment_actions():
     app = create_miniapp_api(bot_token=TEST_BOT_TOKEN, allowed_origin="")
     routes = {route.path: route.methods for route in app.routes if isinstance(route, APIRoute)}
     assert routes == {
         "/api/v1/session": {"POST"},
         "/api/v1/me": {"GET"},
+        "/api/v1/equipment/{slot}": {"GET"},
+        "/api/v1/equipment/equip": {"POST"},
+        "/api/v1/equipment/unequip": {"POST"},
         "/api/v1/players/{target_user_id}": {"GET"},
         "/api/v1/duel/hall-of-fame": {"GET"},
         "/api/v1/boss": {"GET"},
@@ -339,7 +342,14 @@ def test_frontend_has_only_session_duel_and_boss_posts():
     assert 'src="https://telegram.org/js/telegram-web-app.js"' not in html
     for path in routes:
         if path.startswith("/api/"):
-            assert (path in js if "{" not in path else "/api/v1/players/${encodeURIComponent(userId)}" in js)
+            if path == "/api/v1/equipment/{slot}":
+                assert "/api/v1/equipment/${slot}" in js
+            elif "{" in path:
+                assert "/api/v1/players/${encodeURIComponent(userId)}" in js
+            elif path in ("/api/v1/equipment/equip", "/api/v1/equipment/unequip"):
+                assert "`/api/v1/equipment/${action}`" in js
+            else:
+                assert path in js
     assert 'method: "POST", body: { init_data: webApp.initData, launch_token: launchToken }' in js
     assert "new URLSearchParams(webApp.initData).get(\"start_param\")" in js
     assert "localStorage" not in js
