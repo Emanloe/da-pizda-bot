@@ -2,7 +2,7 @@
 
 from database import format_user_title_plain
 from handlers import boss_registration, duel
-from handlers.boss_presentation import BOSS_REQUIRED_HITS
+from handlers.boss_catalog import boss_required_hits
 from handlers.boss_result_repository import get_latest_boss_result
 from text_resources import get_text
 
@@ -24,7 +24,7 @@ def _public_boss(boss: dict) -> dict:
         "id": duel._boss_catalog_id(boss),
         "name": boss["name"],
         "emoji": boss["emoji"],
-        "description": boss["description"],
+        "description": boss.get("description"),
     }
 
 
@@ -64,7 +64,7 @@ def _battle_snapshot(battle: dict, chat_id: int, viewer_user_id: int) -> dict:
             "phase": phase,
             "round": battle["round"],
             "hits": battle["hits"],
-            "required_hits": BOSS_REQUIRED_HITS,
+            "required_hits": boss_required_hits(battle),
             "participants_count": len(participants),
             "alive_count": sum(row["alive"] for row in rows),
             "participants": rows,

@@ -425,8 +425,10 @@
 
     const banner = element("div", "boss-banner");
     const identity = element("div", "boss-identity");
-    identity.append(element("strong", null, battle.boss.name),
-      element("small", null, battle.boss.description));
+    identity.append(element("strong", null, battle.boss.name));
+    if (battle.boss.description) {
+      identity.append(element("small", null, battle.boss.description));
+    }
     banner.append(element("span", "boss-emoji", battle.boss.emoji), identity);
     content.append(banner);
     if (battle.phase !== "join") {

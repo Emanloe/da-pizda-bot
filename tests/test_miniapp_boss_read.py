@@ -115,7 +115,9 @@ async def test_live_boss_chat_isolation_viewer_state_and_safe_snapshot(boss_worl
         participant(101, attack="body", hits=2),
         participant(202, alive=False, hits=1),
     ])
-    b = battle(duel.BOSSES[0], [participant(101, attack=None, hits=0)],
+    b = battle({"id": "generated", "name": "Мрак Танцор Молот",
+                "emoji": "👹", "description": None, "max_hp": 3},
+               [participant(101, attack=None, hits=0)],
                phase="join", round_num=0, hits=0)
     duel.ACTIVE_BOSS_BATTLES[CHAT_A] = a
     duel.ACTIVE_BOSS_BATTLES[CHAT_B] = b
@@ -124,7 +126,7 @@ async def test_live_boss_chat_isolation_viewer_state_and_safe_snapshot(boss_worl
         "a_hits": a["hits"], "b_hits": b["hits"],
         "a_phase": a["phase"], "b_phase": b["phase"],
     })
-    before_telegram = duel._boss_phase_text(a, duel.BOSS_REQUIRED_HITS)
+    before_telegram = duel._boss_phase_text(a, 8)
 
     def forbidden(*args, **kwargs):
         raise AssertionError("boss read used RNG or avatar assignment")
@@ -151,7 +153,7 @@ async def test_live_boss_chat_isolation_viewer_state_and_safe_snapshot(boss_worl
             data = response.json()
             assert data["battle"]["boss"]["id"] == "chizyanovsky_skier"
             assert data["battle"]["hits"] == 3
-            assert data["battle"]["required_hits"] == 5
+            assert data["battle"]["required_hits"] == 8
             assert data["battle"]["participants_count"] == 2
             assert data["battle"]["alive_count"] == 1
             assert data["viewer"] == {
@@ -169,7 +171,9 @@ async def test_live_boss_chat_isolation_viewer_state_and_safe_snapshot(boss_worl
         other_chat = (await client.get("/api/v1/boss", headers=headers_b)).json()
         dead = (await client.get("/api/v1/boss", headers=headers_dead)).json()
         outsider = (await client.get("/api/v1/boss", headers=headers_outsider)).json()
-        assert other_chat["battle"]["boss"]["id"] == "deep_snouted_baron"
+        assert other_chat["battle"]["boss"]["id"] == "generated"
+        assert other_chat["battle"]["required_hits"] == 3
+        assert other_chat["battle"]["boss"]["description"] is None
         assert other_chat["viewer"]["can_act_in_telegram"] is False
         assert dead["viewer"]["in_battle"] is True
         assert dead["viewer"]["alive"] is False
@@ -177,7 +181,7 @@ async def test_live_boss_chat_isolation_viewer_state_and_safe_snapshot(boss_worl
         assert outsider["viewer"]["in_battle"] is False
         assert outsider["viewer"]["can_act_in_telegram"] is False
         assert boss_world.read_bytes() == before_db
-    assert before_telegram == duel._boss_phase_text(a, duel.BOSS_REQUIRED_HITS)
+    assert before_telegram == duel._boss_phase_text(a, 8)
     assert before_state == {
         "a_participants": a["participants"], "b_participants": b["participants"],
         "a_hits": a["hits"], "b_hits": b["hits"],

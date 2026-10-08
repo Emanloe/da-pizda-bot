@@ -370,11 +370,12 @@ async def test_start_boss_battle_creates_complete_join_state(
     from handlers import duel
 
     chat_id = -701
-    boss = {"name": "Выбранный Босс", "emoji": "💀", "description": "desc"}
-    choose = Mock(return_value=boss)
+    boss = {"id": "test", "name": "Выбранный Босс", "emoji": "💀",
+            "description": "desc", "max_hp": 5}
+    prepare = Mock(return_value=boss)
     tasks = TaskRecorder()
     registrations = Mock(return_value=[])
-    monkeypatch.setattr(duel.random, "choice", choose)
+    monkeypatch.setattr(duel, "_boss_prepare_next_boss", prepare)
     monkeypatch.setattr(duel, "_boss_consume_registrations", registrations)
     monkeypatch.setattr(duel.asyncio, "create_task", tasks)
 
@@ -398,7 +399,7 @@ async def test_start_boss_battle_creates_complete_join_state(
     assert battle["boss_block"] is None
     assert tasks.tasks[0].coroutine_name == "_boss_join_timer"
     assert tasks.tasks[0].coroutine_locals["chat_id"] == chat_id
-    choose.assert_called_once_with(duel.BOSSES)
+    prepare.assert_called_once_with(chat_id)
     registrations.assert_called_once_with(chat_id)
     send_kwargs = fake_context.bot.send_message.await_args.kwargs
     assert send_kwargs["text"] == (
@@ -425,9 +426,9 @@ async def test_start_boss_battle_selects_and_announces_chizyanovsky_skier_via_co
         for boss in duel.BOSSES
         if boss["name"] == "Чизяновский лыжник"
     )
-    choose = Mock(return_value=boss)
+    prepare = Mock(return_value=boss)
     tasks = TaskRecorder()
-    monkeypatch.setattr(duel.random, "choice", choose)
+    monkeypatch.setattr(duel, "_boss_prepare_next_boss", prepare)
     monkeypatch.setattr(duel.asyncio, "create_task", tasks)
 
     assert await duel._start_boss_battle(
@@ -436,8 +437,9 @@ async def test_start_boss_battle_selects_and_announces_chizyanovsky_skier_via_co
         include_registrations=False,
     ) is True
 
-    choose.assert_called_once_with(duel.BOSSES)
+    prepare.assert_called_once_with(chat_id)
     assert duel.ACTIVE_BOSS_BATTLES[chat_id]["boss"] is boss
+    assert boss["max_hp"] == 8
     assert boss["description"] == (
         "Любит всратые фигурки, не любит когда их роняют"
     )
@@ -453,9 +455,10 @@ async def test_start_boss_battle_preserves_pre_registered_join_presentation(
     from handlers import duel
 
     chat_id = -721
-    boss = {"name": "Выбранный Босс", "emoji": "💀", "description": "desc"}
+    boss = {"id": "test", "name": "Выбранный Босс", "emoji": "💀",
+            "description": "desc", "max_hp": 5}
     tasks = TaskRecorder()
-    monkeypatch.setattr(duel.random, "choice", Mock(return_value=boss))
+    monkeypatch.setattr(duel, "_boss_prepare_next_boss", Mock(return_value=boss))
     monkeypatch.setattr(duel, "_boss_consume_registrations", Mock(return_value=[(1,)]))
     monkeypatch.setattr(
         duel,

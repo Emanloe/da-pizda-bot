@@ -139,7 +139,11 @@ from handlers.boss_registration import (
     _boss_consume_registrations,
     _boss_get_registered_chat_ids,
     _boss_get_registered_users,
+    _boss_prepare_next_boss,
     _boss_register_user,
+)
+from handlers.boss_catalog import (
+    BOSS_CATALOG_IDS, UNIQUE_BOSSES, boss_required_hits,
 )
 from handlers.duel_items import (
     DUEL_ITEM_EVENT_CALLBACK_PREFIX,
@@ -338,22 +342,12 @@ ACTIVE_DUELS = {}
 # }
 
 
-BOSS_CATALOG_IDS = (
-    "deep_snouted_baron", "dick_crusher_face_eater",
-    "prince_of_underground_chaos", "great_knife_beard",
-    "dick_devourer", "chizyanovsky_skier",
-)
-BOSSES = [
-    {
-        "name": get_text(f"boss.catalog.{boss_id}.name"),
-        "emoji": get_text(f"boss.catalog.{boss_id}.emoji"),
-        "description": get_text(f"boss.catalog.{boss_id}.description"),
-    }
-    for boss_id in BOSS_CATALOG_IDS
-]
+BOSSES = list(UNIQUE_BOSSES)
 
 
 def _boss_catalog_id(boss: dict) -> str | None:
+    if boss.get("id"):
+        return boss["id"]
     return next(
         (boss_id for boss_id, known in zip(BOSS_CATALOG_IDS, BOSSES)
          if boss is known or boss == known),
@@ -2125,7 +2119,7 @@ async def _boss_render_phase(context, chat_id):
     if not battle:
         return
 
-    text = _boss_phase_text(battle, BOSS_REQUIRED_HITS)
+    text = _boss_phase_text(battle, boss_required_hits(battle))
 
     if battle["phase"] == "attack":
         keyboard = _boss_attack_keyboard(
@@ -2565,7 +2559,7 @@ async def _boss_resolve_round(
             if attack != boss_block:
                 projected_hits += 1
 
-                if projected_hits >= BOSS_REQUIRED_HITS:
+                if projected_hits >= boss_required_hits(battle):
                     break
 
             block = participant.get("block")
@@ -2576,7 +2570,7 @@ async def _boss_resolve_round(
 
         round_result = _apply_boss_round_result(
             battle,
-            BOSS_REQUIRED_HITS,
+            boss_required_hits(battle),
         )
         results = []
 
@@ -2636,7 +2630,7 @@ async def _boss_resolve_round(
             boss_block=BOSS_ZONE_NAMES[boss_block],
             results="\n\n".join(results),
             hits=battle["hits"],
-            required_hits=BOSS_REQUIRED_HITS,
+            required_hits=boss_required_hits(battle),
             alive_after=alive_after,
             total=len(battle["participants"]),
         )
@@ -2860,7 +2854,7 @@ def _persist_boss_finish_snapshot(chat_id: int, battle: dict, *, victory: bool) 
         return
     try:
         save_boss_result(build_boss_result(
-            chat_id, battle, boss_id, BOSS_REQUIRED_HITS, victory=victory,
+            chat_id, battle, boss_id, boss_required_hits(battle), victory=victory,
         ))
     except Exception:
         logging.exception("Не удалось сохранить итог боя с боссом в чате %s", chat_id)
@@ -3032,7 +3026,7 @@ async def _start_boss_battle_locked(
     if include_registrations and not is_module_enabled(chat_id, "boss_auto"):
         return False
 
-    boss = random.choice(BOSSES)
+    boss = _boss_prepare_next_boss(chat_id)
 
     if include_registrations and not is_module_enabled(chat_id, "boss_auto"):
         return False
@@ -3042,7 +3036,7 @@ async def _start_boss_battle_locked(
         text=get_text(
             "boss.battle.spawn",
             boss_name=boss["name"],
-            required_hits=BOSS_REQUIRED_HITS,
+            required_hits=boss_required_hits({"boss": boss}),
         ),
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([

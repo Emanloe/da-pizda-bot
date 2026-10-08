@@ -54,23 +54,19 @@ def test_boss_runtime_constants_and_state_contract():
 def test_boss_catalog_has_stable_order_shape_and_yaml_backed_presentation():
     from handlers import duel
 
-    catalog_keys = [
-        "deep_snouted_baron",
-        "dick_crusher_face_eater",
-        "prince_of_underground_chaos",
-        "great_knife_beard",
-        "dick_devourer",
-        "chizyanovsky_skier",
-    ]
+    catalog_keys = ["chizyanovsky_skier"]
 
-    assert len(duel.BOSSES) == 6
+    assert len(duel.BOSSES) == 1
     assert duel.BOSS_CATALOG_IDS == tuple(catalog_keys)
-    assert all(set(boss) == {"name", "emoji", "description"} for boss in duel.BOSSES)
+    assert all(set(boss) == {"id", "name", "emoji", "description", "max_hp"}
+               for boss in duel.BOSSES)
     assert duel.BOSSES == [
         {
+            "id": key,
             "name": get_text(f"boss.catalog.{key}.name"),
             "emoji": get_text(f"boss.catalog.{key}.emoji"),
             "description": get_text(f"boss.catalog.{key}.description"),
+            "max_hp": 8,
         }
         for key in catalog_keys
     ]
@@ -79,6 +75,7 @@ def test_boss_catalog_has_stable_order_shape_and_yaml_backed_presentation():
     assert skier["description"] == (
         "Любит всратые фигурки, не любит когда их роняют"
     )
+    assert skier["max_hp"] == 8
 
 
 def test_boss_registration_uses_isolated_database(tmp_path, monkeypatch, tg_user):

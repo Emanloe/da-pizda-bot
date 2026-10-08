@@ -736,6 +736,16 @@ async function testPolling() {
   document.listeners.visibilitychange();
   await new Promise(setImmediate);
   assert.equal(bossFetchCount, beforeBossTick + 1);
+  app.renderBoss({ ...bossModel, battle: {
+    ...bossModel.battle, required_hits: 7,
+    boss: { id: "generated", name: "Гадючий Танцор Колотитель",
+      emoji: "👹", description: null },
+  } });
+  const generatedBanner = findClass(bossBody.children[0], "boss-banner");
+  assert.equal(generatedBanner.children[1].children.length, 1);
+  assert.equal(generatedBanner.children[1].children[0].textContent,
+    "Гадючий Танцор Колотитель");
+  assert.equal(findClass(bossBody.children[0], "boss-progress").max, 7);
   app.setContext("test-session", "duel");
   intervals[2].callback();
   assert.equal(bossFetchCount, beforeBossTick + 1);

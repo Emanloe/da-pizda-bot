@@ -1,6 +1,7 @@
 """SQLite queue for the next boss battle in each chat."""
 
 import logging
+import random
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from config import DUEL_TIMEZONE
 from database import is_deleted_user_in_transaction
+from handlers.boss_catalog import choose_boss
 
 
 _BOSS_REG_DB_PATH = Path(__file__).resolve().parent.parent / "bot_database.db"
@@ -19,6 +21,16 @@ CREATE TABLE IF NOT EXISTS boss_next_registrations (
     first_name TEXT NOT NULL,
     last_name TEXT,
     PRIMARY KEY (chat_id, user_id)
+)
+"""
+_NEXT_BOSS_SQL = """
+CREATE TABLE IF NOT EXISTS boss_next_battles (
+    chat_id INTEGER PRIMARY KEY,
+    boss_id TEXT NOT NULL,
+    boss_name TEXT NOT NULL,
+    boss_emoji TEXT NOT NULL,
+    boss_description TEXT,
+    max_hp INTEGER NOT NULL CHECK (max_hp > 0)
 )
 """
 
@@ -44,6 +56,7 @@ def _boss_registration_connect():
         # Serialize migration with registration and consumption.
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(_NEXT_TABLE_SQL)
+        conn.execute(_NEXT_BOSS_SQL)
         conn.execute("""CREATE TABLE IF NOT EXISTS deleted_users (
             user_id INTEGER PRIMARY KEY, username TEXT, deleted_at TEXT NOT NULL
         )""")
@@ -79,12 +92,47 @@ def _boss_registration_connect():
     return conn
 
 
+def _prepared_boss_from_row(row) -> dict:
+    return {
+        "id": row[0], "name": row[1], "emoji": row[2],
+        "description": row[3], "max_hp": row[4],
+    }
+
+
+def _prepare_next_boss_in_transaction(conn, chat_id: int, selector) -> dict:
+    row = conn.execute(
+        """SELECT boss_id, boss_name, boss_emoji, boss_description, max_hp
+           FROM boss_next_battles WHERE chat_id = ?""", (chat_id,),
+    ).fetchone()
+    if row is not None:
+        return _prepared_boss_from_row(row)
+    boss = selector()
+    conn.execute(
+        """INSERT INTO boss_next_battles
+           (chat_id, boss_id, boss_name, boss_emoji, boss_description, max_hp)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (chat_id, boss["id"], boss["name"], boss["emoji"],
+         boss.get("description"), boss["max_hp"]),
+    )
+    return boss
+
+
+def _boss_prepare_next_boss(chat_id: int, selector=None) -> dict:
+    """Persist this chat's next boss once, at first signup or battle start."""
+    if selector is None:
+        selector = lambda: choose_boss(random)
+    with _boss_registration_connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        return _prepare_next_boss_in_transaction(conn, chat_id, selector)
+
+
 def _boss_register_user(chat_id, tg_user):
     """Register once for this chat's next actual battle."""
     with _boss_registration_connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         if is_deleted_user_in_transaction(conn.cursor(), tg_user.id):
             return False
+        _prepare_next_boss_in_transaction(conn, chat_id, lambda: choose_boss(random))
         cursor = conn.execute(
             """INSERT OR IGNORE INTO boss_next_registrations
                (chat_id, user_id, username, first_name, last_name)
@@ -117,6 +165,7 @@ def _boss_consume_registrations(chat_id):
             (chat_id,),
         ).fetchall()
         conn.execute("DELETE FROM boss_next_registrations WHERE chat_id = ?", (chat_id,))
+        conn.execute("DELETE FROM boss_next_battles WHERE chat_id = ?", (chat_id,))
         return rows
 
 

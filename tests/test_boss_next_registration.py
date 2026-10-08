@@ -525,7 +525,7 @@ async def test_concurrent_starts_select_and_consume_only_once(
         return SimpleNamespace(message_id=101)
     fake_context.bot.send_message.side_effect = delayed_send
     choose = Mock(return_value=duel.BOSSES[0])
-    monkeypatch.setattr(duel.random, "choice", choose)
+    monkeypatch.setattr(boss_registration, "choose_boss", lambda _: choose())
     monkeypatch.setattr(duel, "_boss_make_participant", lambda person, _: {"id": person.id})
     assert boss_registration._boss_register_user(-1, user(1))
     automatic = asyncio.create_task(duel._start_boss_battle(
@@ -537,7 +537,7 @@ async def test_concurrent_starts_select_and_consume_only_once(
     assert await automatic is True
     assert await manual is False
     assert fake_context.bot.send_message.await_count == 1
-    choose.assert_called_once_with(duel.BOSSES)
+    choose.assert_called_once_with()
     assert 1 in duel.ACTIVE_BOSS_BATTLES[-1]["participants"]
     assert boss_registration._boss_get_registered_users(-1) == []
     duel.ACTIVE_BOSS_BATTLES[-1]["phase_task"].cancel()

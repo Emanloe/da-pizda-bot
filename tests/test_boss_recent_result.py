@@ -49,7 +49,7 @@ async def test_finish_persists_victory_before_cleanup_and_actual_rewards(result_
     alive = make_participant(101, hits=4, blocks=2, rounds_survived=3)
     dead = make_participant(202, alive=False, hits=1, rounds_survived=2)
     dead["death_round"] = 3
-    battle = finished_battle("victory-1", [alive, dead])
+    battle = finished_battle("victory-1", [alive, dead], hits=8)
     duel.ACTIVE_BOSS_BATTLES[CHAT_A] = battle
     real_save = duel.save_boss_result
     def save_while_active(result):
@@ -69,7 +69,7 @@ async def test_finish_persists_victory_before_cleanup_and_actual_rewards(result_
     assert result["battle_id"] == "victory-1"
     assert result["boss_id"] == duel.BOSS_CATALOG_IDS[0]
     assert result["outcome"] == "victory"
-    assert (result["hits"], result["required_hits"], result["rounds"]) == (5, 5, 3)
+    assert (result["hits"], result["required_hits"], result["rounds"]) == (8, 8, 3)
     assert result["hero_user_id"] == 101
     assert result["rewarded_user_ids"] == [101]
     assert result["participants"][1]["death_round"] == 3
@@ -100,7 +100,8 @@ async def test_final_hit_survivors_match_telegram_and_persisted_miniapp_result(
     ]
     battle = make_battle(players, phase="block", hits=0, round_num=1,
                          boss_attack="head", boss_block="body")
-    battle["boss"] = duel.BOSSES[0]
+    battle["boss"] = {"id": "generated", "name": "Пробный Босс Удар",
+                      "emoji": "👹", "description": None, "max_hp": 5}
     battle["battle_id"] = "final-hit-survivors"
     duel.ACTIVE_BOSS_BATTLES[CHAT_A] = battle
     rng_calls = []
@@ -158,8 +159,8 @@ async def test_defeat_and_zero_survivor_victory_keep_existing_semantics(result_w
     assert get_latest_boss_result(CHAT_A)["rewarded_user_ids"] == []
     report.assert_awaited_once()
 
-    # Five hits still win even if no participant survives the final round.
-    duel.ACTIVE_BOSS_BATTLES[CHAT_A] = finished_battle("zero-survivor", [dead])
+    # Eight hits still win even if no participant survives the final round.
+    duel.ACTIVE_BOSS_BATTLES[CHAT_A] = finished_battle("zero-survivor", [dead], hits=8)
     await duel._boss_finish_victory(SimpleNamespace(), CHAT_A)
     assert get_latest_boss_result(CHAT_A)["outcome"] == "victory"
     assert get_latest_boss_result(CHAT_A)["rewarded_user_ids"] == []
@@ -205,6 +206,7 @@ async def test_final_report_persists_actual_item_loot_without_changing_telegram_
     monkeypatch.setattr(duel.random, "random", random_roll)
     monkeypatch.setattr(duel.random, "choice", choice)
     monkeypatch.setattr(duel, "add_duel_inventory_item", inventory)
+    monkeypatch.setattr(duel, "_boss_prepare_next_boss", Mock(return_value=duel.BOSSES[0]))
     bot = SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock())
     await duel._boss_send_final_report(SimpleNamespace(bot=bot), CHAT_A, battle,
                                        victory=True)

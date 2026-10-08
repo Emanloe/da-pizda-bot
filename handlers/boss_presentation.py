@@ -5,10 +5,11 @@ import random
 from database import format_user_title_plain
 from handlers.duel_formatting import boss_player_title as _boss_player_title
 from handlers.duel_text import _boss_battle_hero, _plural_rounds
+from handlers.boss_catalog import LEGACY_REQUIRED_HITS, boss_required_hits
 from text_resources import get_text, get_text_list, get_text_mapping
 
 
-BOSS_REQUIRED_HITS = 5
+BOSS_REQUIRED_HITS = LEGACY_REQUIRED_HITS
 
 BOSS_ZONE_NAMES = get_text_mapping("boss.zones.display")
 _BOSS_UNKNOWN_ZONE = get_text("boss.zones.unknown")
@@ -198,7 +199,7 @@ def _boss_final_report(battle, victory: bool):
             get_text("boss.report.defeat.title"),
             "",
             get_text("boss.report.defeat.boss_standing", boss_name=boss_name),
-            get_text("boss.report.defeat.hits", hits=battle["hits"], required_hits=BOSS_REQUIRED_HITS),
+            get_text("boss.report.defeat.hits", hits=battle["hits"], required_hits=boss_required_hits(battle)),
             get_text("boss.report.defeat.duration", round=battle["round"], round_word=_plural_rounds(battle["round"])),
             get_text("boss.report.defeat.team", total=total),
             "",
