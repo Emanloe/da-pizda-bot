@@ -159,6 +159,8 @@ generation:
     - Нечистый
     - Голодный
     - Холодный
+intro:
+  description: "\n<i>{description}</i>"
 zones:
   display:
     head: Голова
@@ -235,7 +237,7 @@ callback:
     already_participating: Ты уже участвуешь.
     joined: Ты вступил в битву! ⚔️
     progress: |-
-      💀 <b>{boss_name}</b>
+      💀 <b>{boss_name}</b>{description_line}
 
       👹 Босс готов к битве!
 
@@ -253,7 +255,7 @@ callback:
   block_ack: "Защита: {zone} 🛡"
 battle:
   spawn: |-
-    💀 <b>{boss_name}</b>
+    💀 <b>{boss_name}</b>{description_line}
 
     👹 В чат явился босс!
 
@@ -262,7 +264,7 @@ battle:
 
     ⚔️ Нажимайте кнопку ниже, чтобы присоединиться.
   pre_registered: |-
-    💀 <b>{boss_name}</b>
+    💀 <b>{boss_name}</b>{description_line}
 
     👹 Босс явился в подземелье!
 

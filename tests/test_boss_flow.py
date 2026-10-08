@@ -182,6 +182,7 @@ async def test_boss_join_callback_inserts_current_participant_snapshot(
         boss_block=None,
         message_id=714,
     )
+    battle["boss"] = duel.BOSSES[0]
     battle["unrelated"] = {"preserve": True}
     battle_identity = battle
     participants_identity = battle["participants"]
@@ -241,7 +242,8 @@ async def test_boss_join_callback_inserts_current_participant_snapshot(
     assert edit_kwargs["message_id"] == battle["message_id"]
     assert edit_kwargs["parse_mode"] == "HTML"
     assert edit_kwargs["text"] == (
-        "💀 <b>Тестовый Босс</b>\n\n"
+        "💀 <b>Чизяновский лыжник</b>\n"
+        "<i>Любит всратые фигурки, не любит когда их роняют</i>\n\n"
         "👹 Босс готов к битве!\n\n"
         "👥 Участников: <b>1</b>\n\n"
         "⚔️ Присоединяйтесь к бойне."
@@ -403,7 +405,7 @@ async def test_start_boss_battle_creates_complete_join_state(
     registrations.assert_called_once_with(chat_id)
     send_kwargs = fake_context.bot.send_message.await_args.kwargs
     assert send_kwargs["text"] == (
-        "💀 <b>Выбранный Босс</b>\n\n"
+        "💀 <b>Выбранный Босс</b>\n<i>desc</i>\n\n"
         "👹 В чат явился босс!\n\n"
         "🎯 Его нужно поразить <b>5 раз</b>.\n"
         "💀 Босс убивает с одного удара, если игрок не заблокировал нужную зону.\n\n"
@@ -444,7 +446,10 @@ async def test_start_boss_battle_selects_and_announces_chizyanovsky_skier_via_co
         "Любит всратые фигурки, не любит когда их роняют"
     )
     announcement = fake_context.bot.send_message.await_args.kwargs["text"]
-    assert "💀 <b>Чизяновский лыжник</b>" in announcement
+    assert announcement.startswith(
+        "💀 <b>Чизяновский лыжник</b>\n"
+        "<i>Любит всратые фигурки, не любит когда их роняют</i>\n\n"
+    )
 
 
 @pytest.mark.asyncio
@@ -455,8 +460,7 @@ async def test_start_boss_battle_preserves_pre_registered_join_presentation(
     from handlers import duel
 
     chat_id = -721
-    boss = {"id": "test", "name": "Выбранный Босс", "emoji": "💀",
-            "description": "desc", "max_hp": 5}
+    boss = duel.BOSSES[0]
     tasks = TaskRecorder()
     monkeypatch.setattr(duel, "_boss_prepare_next_boss", Mock(return_value=boss))
     monkeypatch.setattr(duel, "_boss_consume_registrations", Mock(return_value=[(1,)]))
@@ -481,7 +485,8 @@ async def test_start_boss_battle_preserves_pre_registered_join_presentation(
     fake_context.bot.edit_message_text.assert_awaited_once()
     edit_kwargs = fake_context.bot.edit_message_text.await_args.kwargs
     assert edit_kwargs["text"] == (
-        "💀 <b>Выбранный Босс</b>\n\n"
+        "💀 <b>Чизяновский лыжник</b>\n"
+        "<i>Любит всратые фигурки, не любит когда их роняют</i>\n\n"
         "👹 Босс явился в подземелье!\n\n"
         "⚔️ Заранее записались: <b>1</b>\n\n"
         "Другие храбрецы ещё могут вступить в бой."
@@ -1114,6 +1119,7 @@ async def test_boss_round_resolution_presentation_is_exact(monkeypatch, fake_con
         boss_attack="head",
         boss_block="body",
     )
+    battle["boss"]["description"] = "Description must stay in recruitment"
     duel.ACTIVE_BOSS_BATTLES[chat_id] = battle
     monkeypatch.setattr(duel, "_boss_start_round", AsyncMock())
     monkeypatch.setattr(duel.asyncio, "sleep", AsyncMock())

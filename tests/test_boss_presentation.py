@@ -6,6 +6,26 @@ import pytest
 from text_resources import get_text, get_text_list, get_text_mapping
 
 
+def test_optional_boss_intro_description_is_escaped_and_has_no_empty_block():
+    from handlers.boss_presentation import boss_intro_description
+
+    assert boss_intro_description({"description": "Нож <острый> & быстрый"}) == (
+        "\n<i>Нож &lt;острый&gt; &amp; быстрый</i>"
+    )
+    for description in (None, "", "  "):
+        line = boss_intro_description({"description": description})
+        assert line == ""
+        for key, extra in (
+            ("boss.battle.spawn", {"required_hits": 3}),
+            ("boss.battle.pre_registered", {"participants": 2}),
+            ("boss.callback.join.progress", {"participants": 2}),
+        ):
+            text = get_text(key, boss_name="Мрак Танцор Молот",
+                            description_line=line, **extra)
+            assert text.startswith("💀 <b>Мрак Танцор Молот</b>\n\n")
+            assert "<i>" not in text and "None" not in text
+
+
 def make_participant(
     username,
     *,
@@ -109,7 +129,7 @@ def test_boss_phase_formatting_preserves_statuses_and_exact_templates(monkeypatc
         lambda participant: participant["title"],
     )
     battle = {
-        "boss": {"name": "Тестовый Босс"},
+        "boss": {"name": "Тестовый Босс", "description": "Only in recruitment"},
         "round": 4,
         "hits": 2,
         "phase": "attack",

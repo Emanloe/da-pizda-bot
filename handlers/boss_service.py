@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from text_resources import get_text
+from handlers.boss_presentation import boss_intro_description
 from database import is_deleted_user
 
 
@@ -63,6 +64,7 @@ async def apply_boss_action(context, chat_id: int, user_id: int, intent: str,
                     chat_id=chat_id, message_id=battle["message_id"],
                     text=get_text("boss.callback.join.progress",
                                   boss_name=battle["boss"]["name"],
+                                  description_line=boss_intro_description(battle["boss"]),
                                   participants=len(battle["participants"])),
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup([[

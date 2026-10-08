@@ -79,6 +79,7 @@ from handlers.duel_formatting import (
 from handlers.boss_presentation import (
     BOSS_REQUIRED_HITS,
     BOSS_ZONE_NAMES,
+    boss_intro_description,
     _boss_death_epitaph,
     _boss_final_report,
     _boss_survivor_epitaph,
@@ -3036,6 +3037,7 @@ async def _start_boss_battle_locked(
         text=get_text(
             "boss.battle.spawn",
             boss_name=boss["name"],
+            description_line=boss_intro_description(boss),
             required_hits=boss_required_hits({"boss": boss}),
         ),
         parse_mode="HTML",
@@ -3108,6 +3110,7 @@ async def _start_boss_battle_locked(
                 text=get_text(
                     "boss.battle.pre_registered",
                     boss_name=boss["name"],
+                    description_line=boss_intro_description(boss),
                     participants=len(battle["participants"]),
                 ),
                 parse_mode="HTML",

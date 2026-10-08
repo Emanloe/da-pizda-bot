@@ -1,6 +1,7 @@
 """Pure text composition for boss battle results."""
 
 import random
+from html import escape
 
 from database import format_user_title_plain
 from handlers.duel_formatting import boss_player_title as _boss_player_title
@@ -13,6 +14,14 @@ BOSS_REQUIRED_HITS = LEGACY_REQUIRED_HITS
 
 BOSS_ZONE_NAMES = get_text_mapping("boss.zones.display")
 _BOSS_UNKNOWN_ZONE = get_text("boss.zones.unknown")
+
+
+def boss_intro_description(boss: dict) -> str:
+    """Optional, HTML-safe description beneath a boss name during recruitment."""
+    description = boss.get("description")
+    if not description or not description.strip():
+        return ""
+    return get_text("boss.intro.description", description=escape(description))
 
 
 class BossFinalReport(str):
