@@ -10,16 +10,21 @@ from loot.translit import transliterate
 # Freeze the catalog this migration was audited against. Later catalog edits must
 # not reinterpret old canonical names under different generation rules.
 _CATALOG_HASHES = {
-    "qualities.json": "83a6290465393a7a2017669b0cc1a53fb8d00c47520e67ff8ed55c1447c3c7bf",
-    "adjectives.json": "574339dc10202325487fd640350c6297d8657c9329f843d198c02f46a4a15c67",
-    "bases.json": "bcaadd5269a00e09dc93e782385a92cc169e49a4d9bdceabb3e0038129a73626",
-    "sources.json": "d1982dd82ded365ea9d067e5e0cbd907495f74265e6edd97e2cc1c3f266bc5f3",
+    "qualities.json": "4e697c74ef3c31db1ac3c0e85d265944d8e570f4dec993ddac61050071348cd3",
+    "adjectives.json": "affe4101519e453b5bd57e1f7ccca403deb8404e634b62532821da99a7c3ecf8",
+    "bases.json": "957f280887f39ef5313ed56701d83f9a33926cda50f3a23b4afccec3d55940e0",
+    "sources.json": "bc42607e71de3d39b33486ad2bd915f7612ea144f05e5f02129b905b727c2ba7",
 }
+
+
+def _catalog_sha256(path: Path) -> str:
+    # Git checks out LF on Linux and CRLF on Windows; line endings are not catalog data.
+    return sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def legacy_catalog_matches_snapshot() -> bool:
     catalog_dir = Path(__file__).resolve().parent.parent / "data" / "loot"
-    return all(sha256((catalog_dir / filename).read_bytes()).hexdigest() == expected
+    return all(_catalog_sha256(catalog_dir / filename) == expected
                for filename, expected in _CATALOG_HASHES.items())
 
 

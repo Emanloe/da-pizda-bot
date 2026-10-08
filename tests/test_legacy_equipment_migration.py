@@ -1,6 +1,8 @@
 """One-time recovery of provable pre-equipment generated inventory."""
 
 import sqlite3
+from hashlib import sha256
+from pathlib import Path
 from types import SimpleNamespace
 
 import database as db
@@ -12,6 +14,7 @@ from loot.translit import transliterate
 
 CHAT = -9401
 SHIELD = "Поганый коммунальный щиток «Гарда» кобры"
+SHIELD_ID = "poganyy_kommunalnyy_schitok_garda_kobry"
 BASTION = "Поганый коммунальный бастион кобры"
 
 
@@ -53,11 +56,27 @@ def metadata(item_id):
 def test_exact_recovery_validates_complete_name_and_transliteration():
     assert recover.legacy_catalog_matches_snapshot()
     item_id = transliterate(SHIELD)
+    assert item_id == SHIELD_ID
     assert recover.recover_legacy_generated_metadata(item_id, SHIELD) == (
         "recovered", ("пах", "m"))
     assert recover.recover_legacy_generated_metadata("wrong_id", SHIELD) == ("unknown", None)
     assert recover.recover_legacy_generated_metadata(
         transliterate("Несуществующий предмет"), "Несуществующий предмет") == ("unknown", None)
+
+
+def test_real_catalog_fingerprints_ignore_only_checkout_line_endings(tmp_path):
+    catalog_dir = Path(__file__).resolve().parent.parent / "data" / "loot"
+    for filename, expected in recover._CATALOG_HASHES.items():
+        raw = (catalog_dir / filename).read_bytes()
+        normalized = raw.replace(b"\r\n", b"\n")
+        assert sha256(normalized).hexdigest() == expected
+        copy = tmp_path / filename
+        copy.write_bytes(normalized)
+        assert recover._catalog_sha256(copy) == expected
+        copy.write_bytes(normalized.replace(b"\n", b"\r\n"))
+        assert recover._catalog_sha256(copy) == expected
+        copy.write_bytes(normalized + b" ")
+        assert recover._catalog_sha256(copy) != expected
 
 
 def test_id_collision_with_different_metadata_is_rejected(monkeypatch):
@@ -75,6 +94,7 @@ def test_id_collision_with_different_metadata_is_rejected(monkeypatch):
 def test_old_shield_metadata_and_free_groin_are_restored_once(temp_database):
     register()
     instance_id, item_id = legacy_item(SHIELD)
+    assert item_id == SHIELD_ID
     before = db.get_duel_inventory(CHAT, 1)
     run_legacy_migration()
     assert metadata(item_id) == (SHIELD, "пах", "m")
