@@ -347,7 +347,7 @@ async def test_duel_stats_inventory_grouping_html_safety_unknown_and_read_only(
 
 
 @pytest.mark.asyncio
-async def test_old_and_new_dwarfs_see_virtual_base_items_without_database_rows(
+async def test_old_and_new_dwarfs_see_virtual_base_items_only_in_equipment(
     monkeypatch,
     temp_database,
     fake_context,
@@ -371,9 +371,10 @@ async def test_old_and_new_dwarfs_see_virtual_base_items_without_database_rows(
             )
         )
         await duel.duel_stats_command(update, fake_context)
-        assert sent.await_args.args[2].endswith(
-            "<b>Инвентарь:</b> Промасленная жилетка, Нож"
-        )
+        message = sent.await_args.args[2]
+        assert "⚔️ Оружие: Нож" in message
+        assert "🧥 Верхняя одежда: Промасленная жилетка" in message
+        assert message.endswith("<b>Инвентарь:</b> пусто")
         assert db.get_duel_inventory(chat_id, user.id) == []
 
 

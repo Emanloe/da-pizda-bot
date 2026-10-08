@@ -249,6 +249,14 @@ const ownProfile = {
   points: 30, max_points: 100, wins: 140, losses: 123, daily_wins: 2,
   ineligibility: "no_dick", boss_wins: 3, dick_status: { text: "Без хуя" },
   titles: {}, inventory: [], pet: null,
+  equipment: {
+    weapon: { label: "⚔️ Оружие", name: "Именной меч" },
+    outerwear: { label: "🧥 Верхняя одежда", name: "Промасленная жилетка" },
+    clothing: { label: "👕 Торс", name: "Пусто" },
+    head: { label: "🎩 Головной убор", name: "Пусто" },
+    groin: { label: "🍆 Пах", name: "Пусто" },
+    footwear: { label: "👞 Обувь", name: "Пусто" },
+  },
 };
 app.renderHome(ownProfile);
 const homeContent = nodes.get("home-content").children[0];
@@ -261,7 +269,11 @@ assert.equal(homeProfile.children[0].height, 200);
 assert.equal(homeProfile.children[1].children.length, 6);
 assert.equal(homeProfile.children[1].children[0].children[1].textContent, "<script>alert(1)</script>");
 assert.deepEqual(homeContent.children.filter(child => child.tag === "h3").map(child => child.textContent),
-  ["Хуяние", "Статус", "Инвентарь"]);
+  ["Хуяние", "Статус", "Экипировка", "Инвентарь"]);
+const equipmentGrid = findClass(homeContent, "equipment-grid");
+assert.equal(equipmentGrid.children.length, 6);
+assert.equal(equipmentGrid.children[0].children[1].textContent, "Именной меч");
+assert.equal(equipmentGrid.children[2].children[0].textContent, "👕 Торс");
 app.renderProfile(ownProfile, nodes.get("opponents-content"), true);
 const inspectedProfile = nodes.get("opponents-content").children[0];
 const inspectedHero = findClass(inspectedProfile, "home-profile");
@@ -270,7 +282,7 @@ assert.equal(inspectedHero.children[1].children.length, 7);
 assert.equal(findClass(inspectedProfile, "inspect-back").textContent, "← К соперникам");
 assert.equal(findClass(inspectedProfile, "hint").textContent, "Профиль игрока · только просмотр");
 assert.deepEqual(inspectedProfile.children.filter(child => child.tag === "h3").map(child => child.textContent),
-  ["Хуяние", "Статус", "Инвентарь"]);
+  ["Хуяние", "Статус", "Экипировка", "Инвентарь"]);
 function countdownText() { return app.countdownTurn?.node.textContent; }
 function actionPanel() {
   return findClass(nodes.get("duel-content").children[0], "action-box");

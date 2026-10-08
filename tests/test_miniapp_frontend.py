@@ -383,7 +383,7 @@ def test_frontend_has_only_session_duel_and_boss_posts():
     assert 'opponents.addEventListener("click", () => navigate("opponents"))' in js
     assert 'node.textContent = String(value)' in js
     assert "Math.random" not in js
-    assert 'const OUTCOME_NAMES = { miss: "Промах", block: "Блок", hit: "Попадание", suicide: "Самопоражение" }' in js
+    assert 'const OUTCOME_NAMES = { miss: "Промах", block: "Блок", hit: "Попадание", suicide: "Самопоражение", absorbed: "Удар поглощён" }' in js
     assert 'const ACTIVE_POLL_MS = 1000' in js
     assert 'const IDLE_POLL_MS = 8000' in js
     assert 'const COUNTDOWN_TICK_MS = 250' in js

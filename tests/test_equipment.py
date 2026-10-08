@@ -271,6 +271,12 @@ def test_effective_defaults_overrides_and_telegram_inventory(temp_database):
     model = player_stats_read_model(CHAT, 1)
     assert model["equipment"]["weapon"]["name"] == "Нож"
     assert model["equipment"]["outerwear"]["name"] == "Промасленная жилетка"
+    assert model["inventory"] == []
+    assert model["telegram_inventory"] == "пусто"
+    assert model["equipment"]["clothing"]["label"] == "👕 Торс"
+    assert [model["equipment"][slot]["label"] for slot in (
+        "weapon", "outerwear", "head", "groin", "footwear")] == [
+        "⚔️ Оружие", "🧥 Верхняя одежда", "🎩 Головной убор", "🍆 Пах", "👞 Обувь"]
     assert all(model["equipment"][slot]["item_id"] is None
                for slot in ("clothing", "head", "groin", "footwear"))
     award("sword", "Меч & щит", "оружие")
@@ -279,8 +285,14 @@ def test_effective_defaults_overrides_and_telegram_inventory(temp_database):
     assert model["equipment"]["weapon"]["name"] == "Меч & щит"
     assert model["equipment"]["outerwear"]["name"] == "Плащ"
     assert model["equipment"]["weapon"]["generated"] is True
-    assert "Меч &amp; щит" in format_player_stats_telegram(model)
+    telegram = format_player_stats_telegram(model)
+    assert "Меч &amp; щит" in telegram
+    assert "👕 Торс: Пусто" in telegram
+    assert "👕 Одежда" not in telegram
+    assert "<b>Инвентарь:</b> Промасленная жилетка" not in telegram
+    assert "Нож" not in telegram.split("<b>Инвентарь:</b>", 1)[1]
     assert next(item for item in model["inventory"] if item["item_id"] == "sword")["equipped_count"] == 1
+    assert {item["item_id"] for item in model["inventory"]} == {"sword", "cloak"}
     assert db.remove_duel_inventory_instance(CHAT, 1, model["equipment"]["weapon"]["inventory_id"])
     assert player_stats_read_model(CHAT, 1)["equipment"]["weapon"]["name"] == "Нож"
     cloak_id = model["equipment"]["outerwear"]["inventory_id"]
@@ -307,6 +319,8 @@ async def test_miniapp_profile_exposes_effective_equipment_and_owned_stack(temp_
     assert profile["equipment"]["weapon"]["name"] == "Именной меч"
     assert profile["equipment"]["outerwear"]["name"] == "Промасленная жилетка"
     assert profile["equipment"]["clothing"]["item_id"] is None
+    assert profile["equipment"]["clothing"]["label"] == "👕 Торс"
+    assert {item["item_id"] for item in profile["inventory"]} == {"relic_sword"}
     sword = next(item for item in profile["inventory"] if item["item_id"] == "relic_sword")
     assert sword["count"] == 2 and sword["equipped_count"] == 1
 

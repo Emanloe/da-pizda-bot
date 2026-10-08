@@ -138,33 +138,29 @@ async def test_donate_and_gnomed_command_handlers_are_registered_once(monkeypatc
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("stored_item_ids", "expected_inventory", "forbidden_inventory"),
+    ("stored_item_ids", "expected_inventory"),
     [
-        ([], "Промасленная жилетка, Нож", "Инвентарь:</b> пусто"),
+        ([], "пусто"),
         (
             ["vevangel_wing"],
-            "Промасленная жилетка, Нож, Крыло Вевангела",
-            "Инвентарь:</b> пусто",
+            "Крыло Вевангела",
         ),
         (
             ["vevangel_wing", "vevangel_wing"],
-            "Промасленная жилетка, Нож, Крыло Вевангела ×2",
-            "Инвентарь:</b> пусто",
+            "Крыло Вевангела ×2",
         ),
         (
             ["oiled_vest", "knife"],
-            "Промасленная жилетка, Нож",
-            "Промасленная жилетка ×2",
+            "пусто",
         ),
     ],
 )
-async def test_registered_duel_stats_handler_sends_virtual_base_inventory(
+async def test_registered_duel_stats_handler_shows_base_items_only_in_equipment(
     monkeypatch,
     temp_database,
     fake_context,
     stored_item_ids,
     expected_inventory,
-    forbidden_inventory,
 ):
     from telegram.ext import CommandHandler
     import bot
@@ -240,7 +236,8 @@ async def test_registered_duel_stats_handler_sends_virtual_base_inventory(
     reply_text.assert_awaited_once()
     final_output = reply_text.await_args.args[0]
     assert f"<b>Инвентарь:</b> {expected_inventory}" in final_output
-    assert forbidden_inventory not in final_output
+    assert "⚔️ Оружие: Нож" in final_output
+    assert "🧥 Верхняя одежда: Промасленная жилетка" in final_output
     assert "Промасленная жилетка ×2" not in final_output
     assert "Нож ×2" not in final_output
 

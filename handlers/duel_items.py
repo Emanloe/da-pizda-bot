@@ -107,8 +107,9 @@ def get_duel_item_name(item_id: str, *, unknown_fallback: str | None = None) -> 
 
 
 def get_duel_display_inventory_rows(collectible_instances: list[dict],
-                                    equipped_instance_ids=frozenset()) -> list[dict]:
-    """Permanent base items and grouped collectibles, without changing storage."""
+                                    equipped_instance_ids=frozenset(), *,
+                                    include_base: bool = True) -> list[dict]:
+    """Group collectibles, optionally showing virtual permanent base items."""
     counts = Counter(
         instance["item_id"]
         for instance in collectible_instances
@@ -121,10 +122,10 @@ def get_duel_display_inventory_rows(collectible_instances: list[dict],
             item_id,
         ),
     )
-    rows = [
+    rows = ([
         {"item_id": item["id"], "name": item["name"], "count": 1}
         for item in BASE_DUEL_ITEMS
-    ] + [
+    ] if include_base else []) + [
         {"item_id": item_id, "name": get_duel_item_name(item_id, unknown_fallback=item_id),
          "count": counts[item_id]}
         for item_id in item_ids
@@ -138,10 +139,13 @@ def get_duel_display_inventory_rows(collectible_instances: list[dict],
 
 
 def format_duel_display_inventory(collectible_instances: list[dict],
-                                  equipped_instance_ids=frozenset()) -> str:
-    """Format permanent base items followed by stored collectible instances."""
+                                  equipped_instance_ids=frozenset(), *,
+                                  include_base: bool = True) -> str:
+    """Format virtual base items and stored collectible instances."""
     formatted = []
-    for item in get_duel_display_inventory_rows(collectible_instances, equipped_instance_ids):
+    for item in get_duel_display_inventory_rows(
+        collectible_instances, equipped_instance_ids, include_base=include_base
+    ):
         name = escape(get_duel_item_name(item["item_id"]))
         count = item["count"]
         formatted.append(

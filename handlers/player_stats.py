@@ -56,11 +56,14 @@ def player_stats_read_model(chat_id: int, user_id: int) -> dict | None:
         "titles": get_duel_title_read_model(user),
         "boss_wins": get_bosses_defeated(user_id, chat_id),
         "ineligibility": profile.ineligibility,
-        "inventory": get_duel_display_inventory_rows(profile.inventory, equipped_ids),
+        "inventory": get_duel_display_inventory_rows(
+            profile.inventory, equipped_ids, include_base=False),
         "equipment": equipment,
         "pet": (get_text("huecrab.inventory") if has_huecrab(chat_id, user_id) else None),
         "telegram_title": format_user_title(user),
-        "telegram_inventory": format_duel_display_inventory(profile.inventory, equipped_ids),
+        "telegram_inventory": (format_duel_display_inventory(
+            profile.inventory, equipped_ids, include_base=False)
+            or get_text("duel.inventory.empty")),
         "telegram_equipment": "\n".join([
             get_text("duel.equipment.title"),
             *(get_text("duel.equipment.slot", label=escape(equipment[slot]["label"]),

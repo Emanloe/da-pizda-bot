@@ -1,3 +1,4 @@
+import logging
 import random
 import re
 import sqlite3
@@ -439,6 +440,10 @@ def init_db():
                 PRIMARY KEY (chat_id, user_id, slot)
             )
         """)
+        cursor.execute("""CREATE TABLE IF NOT EXISTS generated_equipment_migrations (
+            migration_key TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
         cursor.execute("""
             CREATE TRIGGER IF NOT EXISTS trg_duel_inventory_equipment_delete
             AFTER DELETE ON duel_inventory
@@ -758,6 +763,117 @@ def init_db():
             WHERE is_bot = 0 AND NOT EXISTS
                 (SELECT 1 FROM deleted_users WHERE deleted_users.user_id = users.user_id)
         """, (today_str,))
+
+    _migrate_legacy_generated_equipment()
+
+
+def _migrate_legacy_generated_equipment() -> None:
+    """Restore provable legacy metadata and equip once, after schema initialization."""
+    from handlers.duel_items import DUEL_ITEM_NAMES
+    from loot.recover import (legacy_catalog_matches_snapshot,
+                              recover_legacy_generated_metadata)
+
+    migration_key = "legacy_generated_equipment_v1"
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if cursor.execute(
+            "SELECT 1 FROM generated_equipment_migrations WHERE migration_key = ?",
+            (migration_key,),
+        ).fetchone():
+            return
+        legacy = cursor.execute(
+            """SELECT item_id, name, kind, base_form FROM generated_item_names
+               WHERE kind IS NULL OR base_form IS NULL"""
+        ).fetchall()
+
+    if not legacy_catalog_matches_snapshot():
+        logging.warning("Legacy generated equipment migration skipped: loot catalog changed")
+        return
+
+    candidates = []
+    stats = {"considered": 0, "restored": 0, "ambiguous": 0,
+             "unknown": 0, "conflicting": 0, "equipped": 0, "occupied": 0}
+    for item_id, name, old_kind, old_form in legacy:
+        if item_id in DUEL_ITEM_NAMES:
+            continue
+        stats["considered"] += 1
+        status, metadata = recover_legacy_generated_metadata(item_id, name)
+        if status != "recovered":
+            stats[status] += 1
+            continue
+        kind, base_form = metadata
+        if ((old_kind is not None and old_kind != kind)
+                or (old_form is not None and old_form != base_form)):
+            stats["conflicting"] += 1
+            continue
+        candidates.append((item_id, name, kind, base_form, old_kind is None))
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            if cursor.execute(
+                "SELECT 1 FROM generated_equipment_migrations WHERE migration_key = ?",
+                (migration_key,),
+            ).fetchone():
+                return
+            eligible_slots = {}
+            for item_id, name, kind, base_form, missing_kind in candidates:
+                cursor.execute(
+                    """UPDATE generated_item_names
+                       SET kind = COALESCE(kind, ?), base_form = COALESCE(base_form, ?)
+                       WHERE item_id = ? AND name = ?
+                         AND (kind IS NULL OR kind = ?)
+                         AND (base_form IS NULL OR base_form = ?)""",
+                    (kind, base_form, item_id, name, kind, base_form),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                stats["restored"] += 1
+                if missing_kind and kind in GENERATED_EQUIPMENT_SLOTS:
+                    eligible_slots[item_id] = GENERATED_EQUIPMENT_SLOTS[kind]
+
+            occupied = set(cursor.execute(
+                "SELECT chat_id, user_id, slot FROM duel_equipment"
+            ).fetchall())
+            equipped_ids = {row[0] for row in cursor.execute(
+                "SELECT inventory_id FROM duel_equipment"
+            ).fetchall()}
+            skipped_slots = set()
+            if eligible_slots:
+                inventory = cursor.execute(
+                    """SELECT i.id, i.chat_id, i.user_id, i.item_id
+                       FROM duel_inventory AS i
+                       JOIN duel_users AS u ON u.chat_id = i.chat_id AND u.user_id = i.user_id
+                       WHERE NOT EXISTS (SELECT 1 FROM deleted_users AS d
+                                         WHERE d.user_id = i.user_id)
+                       ORDER BY i.id"""
+                ).fetchall()
+                for inventory_id, chat_id, user_id, item_id in inventory:
+                    if item_id not in eligible_slots or inventory_id in equipped_ids:
+                        continue
+                    slot = eligible_slots[item_id]
+                    key = (chat_id, user_id, slot)
+                    if key in occupied:
+                        skipped_slots.add(key)
+                        continue
+                    cursor.execute(
+                        """INSERT INTO duel_equipment (chat_id, user_id, slot, inventory_id)
+                           VALUES (?, ?, ?, ?)""",
+                        (chat_id, user_id, slot, inventory_id),
+                    )
+                    occupied.add(key)
+                    equipped_ids.add(inventory_id)
+                    stats["equipped"] += 1
+            stats["occupied"] = len(skipped_slots)
+            cursor.execute(
+                "INSERT INTO generated_equipment_migrations (migration_key) VALUES (?)",
+                (migration_key,),
+            )
+    except Exception:
+        logging.exception("Legacy generated equipment migration failed; transaction rolled back")
+        raise
+    logging.info("Legacy generated equipment migration: %s", stats)
 
 
 # ==========================================

@@ -122,6 +122,7 @@ def test_generator_controlled_rng_and_second_adjective(
     )
     assert item["item_id"] == transliterate(item["name"])
     assert item["tier"] == 2 and item["kind"] == "оружие"
+    assert item["base_form"] == "f"
     assert [call[0] for call in rng.calls] == (
         ["choices", "choices", "choices", "choices", "random"]
         + (["choices"] if expected_count == 2 else [])
@@ -135,8 +136,20 @@ def test_only_static_or_special_id_collision_rerolls(monkeypatch, reserved_id):
         {"item_id": "generated_relic", "name": "Новая реликвия"},
     ])
     monkeypatch.setattr(duel_items, "generate", chosen)
-    assert duel_items.roll_generated_item() == ("generated_relic", "Новая реликвия")
+    assert duel_items.roll_generated_item() == ("generated_relic", "Новая реликвия", None, None)
     assert chosen.call_count == 2
+
+
+def test_generated_item_roll_carries_base_form_without_extra_rng(monkeypatch):
+    chosen = Mock(return_value={
+        "item_id": "generated_kanote", "name": "Странное канотье из легенды",
+        "kind": "головной убор", "base_form": "n",
+    })
+    monkeypatch.setattr(duel_items, "generate", chosen)
+    assert duel_items.roll_generated_item() == (
+        "generated_kanote", "Странное канотье из легенды", "головной убор", "n",
+    )
+    chosen.assert_called_once_with(duel_items.random)
 
 
 def test_existing_generated_id_keeps_canonical_name_and_stacks(temp_database, monkeypatch):
@@ -191,7 +204,7 @@ def test_additive_name_dictionary_migration_and_restart(tmp_path, monkeypatch):
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT value FROM preserved").fetchone()[0] == "keep"
         columns = [row[1] for row in conn.execute("PRAGMA table_info(generated_item_names)")]
-    assert columns == ["item_id", "name"]
+    assert columns == ["item_id", "name", "kind", "base_form"]
 
 
 def test_dig_fixes_item_at_discovery_and_pickup_never_regenerates(temp_database):
@@ -307,7 +320,7 @@ def test_player_originated_drop_keeps_item_id_without_generator(temp_database):
     _register(chat_id, 1)
     _register(chat_id, 2)
     with db.get_db() as conn:
-        conn.execute("INSERT INTO generated_item_names VALUES (?, ?)",
+        conn.execute("INSERT INTO generated_item_names (item_id, name) VALUES (?, ?)",
                      ("owned_generated", "Вещь из кармана"))
     original = db.add_duel_inventory_item(chat_id, 1, "owned_generated")
     drop = db.create_duel_item_event_from_inventory(chat_id, 1, original["id"])

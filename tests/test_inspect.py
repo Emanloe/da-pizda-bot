@@ -111,7 +111,8 @@ async def test_inspect_matches_me_and_telegram_stats_without_gameplay_writes(
     monkeypatch.setattr(duel, "send_and_schedule", sent)
     model = player_stats_read_model(CHAT_A, 202)
     assert model["points"] == 0
-    assert [item["item_id"] for item in model["inventory"]][:2] == ["oiled_vest", "knife"]
+    assert [item["item_id"] for item in model["inventory"]][:2] == [
+        "ceremonial_bolt", "unknown_legacy"]
     assert model["inventory"][-1]["name"] == "unknown_legacy"
 
     reply_update = update_for(CHAT_A, 101, reply_id=202)

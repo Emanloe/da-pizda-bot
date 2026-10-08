@@ -37,7 +37,7 @@ def no_rng(*_args, **_kwargs):
 
 
 @pytest.mark.asyncio
-async def test_me_matches_real_duel_stats_including_base_inventory_and_pet(
+async def test_me_matches_real_duel_stats_without_base_inventory_duplication_and_pet(
     temp_database, fake_context, monkeypatch,
 ):
     register(CHAT_A, 101, "stats_user")
@@ -86,14 +86,15 @@ async def test_me_matches_real_duel_stats_including_base_inventory_and_pet(
         assert get_text("duel.stats.title_item", title=title["text"],
                         count=title["count"]) in telegram_text
     assert [item["item_id"] for item in me["inventory"]] == [
-        "oiled_vest", "knife", "cork_with_bite_marks", "ceremonial_bolt",
+        "cork_with_bite_marks", "ceremonial_bolt",
     ]
-    assert me["inventory"][:2] == [
-        {"item_id": "oiled_vest", "name": "Промасленная жилетка", "count": 1},
-        {"item_id": "knife", "name": "Нож", "count": 1},
-    ]
+    assert me["equipment"]["weapon"]["name"] == "Нож"
+    assert me["equipment"]["outerwear"]["name"] == "Промасленная жилетка"
     assert me["inventory"][-1]["count"] == 2
-    assert format_duel_display_inventory(database.get_duel_inventory(CHAT_A, 101)) in telegram_text
+    inventory_line = format_duel_display_inventory(
+        database.get_duel_inventory(CHAT_A, 101), include_base=False)
+    assert f"<b>Инвентарь:</b> {inventory_line}" in telegram_text
+    assert "<b>Инвентарь:</b> Промасленная жилетка" not in telegram_text
     assert me["pet"] == get_text("huecrab.inventory")
     assert me["pet"] in telegram_text
     assert [item["id"] for item in BASE_DUEL_ITEMS] == ["oiled_vest", "knife"]
