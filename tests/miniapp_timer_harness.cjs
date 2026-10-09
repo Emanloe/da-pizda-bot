@@ -504,10 +504,10 @@ async function testPolling() {
   assert.equal(await app.loadView("duel", true), true);
   assert.equal(duelScreen.querySelector(".view-message"), null);
 
-  // Session expiry remains visible on the active tab and asks for /duel_app.
+  // Session expiry remains visible on the active tab and asks for /app.
   getMode = "expired";
   assert.equal(await app.loadView("duel", true), false);
-  assert.ok(nodes.get("duel-content").children[0].textContent.includes("/duel_app"));
+  assert.ok(nodes.get("duel-content").children[0].textContent.includes("/app"));
   assert.equal(duelScreen.querySelector(".view-message"), null);
   const afterExpiry = fetchCount;
   now += 1000;

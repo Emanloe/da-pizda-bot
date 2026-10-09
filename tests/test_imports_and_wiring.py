@@ -53,11 +53,12 @@ def test_bot_suppresses_http_client_info_logs():
 def test_bot_command_menu_preserves_descriptions_and_order():
     import bot
 
-    assert ("duel_app", "Дуэли: мини-приложение") in [
+    assert ("app", "Открыть мини-приложение") in [
         (command.command, command.description) for command in bot.BOT_COMMANDS
     ]
+    assert "duel_app" not in [command.command for command in bot.BOT_COMMANDS]
     assert [(command.command, command.description) for command in bot.BOT_COMMANDS
-            if command.command not in {"duel_app", "modules"}] == [
+            if command.command != "modules"] == [
         ("start", "Запустить бота"),
         ("dickpukku", "Покинуть гномью игру"),
         ("help", "Хелп по командам"),
@@ -68,6 +69,7 @@ def test_bot_command_menu_preserves_descriptions_and_order():
         ("toggle_forward", "Переключить пересылку"),
         ("toggle_autodelete", "Автоудаление сообщений"),
         ("duel", "Гномья дуэль на ножах"),
+        ("app", "Открыть мини-приложение"),
         ("name", "Назвать своего гнома"),
         ("summary", "Месячная статистика чата"),
         ("dig", "Копать за 10 очков"),
@@ -122,7 +124,7 @@ async def test_donate_and_gnomed_command_handlers_are_registered_once(monkeypatc
     for callback, command in (
         (bot.donate_command, "donate"),
         (bot.gnomed_command, "gnomed"),
-        (bot.duel_app_command, "duel_app"),
+        (bot.duel_app_command, ("app", "duel_app")),
         (bot.name_command, "name"),
         (bot.summary_command, "summary"),
         (bot.dig_command, "dig"),
@@ -133,7 +135,9 @@ async def test_donate_and_gnomed_command_handlers_are_registered_once(monkeypatc
             if isinstance(item, CommandHandler) and item.callback is callback
         ]
         assert len(handlers) == 1
-        assert handlers[0].commands == frozenset({command})
+        assert handlers[0].commands == frozenset(
+            command if isinstance(command, tuple) else (command,)
+        )
 
 
 @pytest.mark.asyncio

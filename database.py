@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from html import escape
 from zoneinfo import ZoneInfo
 import pytz
-from config import DUEL_TIMEZONE, DICK_STEAL_CHANCE, DICK_STEAL_CHANCE_PER_WIN, DIG_FIND_CHANCE
+from config import DUEL_TIMEZONE, DICK_STEAL_CHANCE, DICK_STEAL_CHANCE_PER_WIN
 from text_resources import get_text
 
 DB_NAME = "bot_database.db"
@@ -1805,7 +1805,10 @@ def get_generated_item_name(item_id: str) -> str | None:
 
 
 def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, dict | None]:
-    """Pay for one dig, and optionally reserve its exact loot, in one transaction."""
+    """Pay for an allowed dig and reserve its exact loot in one transaction.
+
+    ``roll`` remains in the existing call signature but is never consumed.
+    """
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("BEGIN IMMEDIATE")
@@ -1844,23 +1847,18 @@ def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, 
         if user[0] < 10:
             return "insufficient_points", None
 
-        found = roll() < DIG_FIND_CHANCE
-        item_id, generated_name, generated_kind, generated_base_form = (None, None, None, None)
-        if found:
-            item_id, generated_name, generated_kind, generated_base_form = _unpack_generated_item(item_selector())
-        event_id = None
-        if found:
-            if item_id in ("oiled_vest", "knife"):
-                raise ValueError("Permanent base items cannot be dug up")
-            cursor.execute(
-                "INSERT OR IGNORE INTO duel_item_events (chat_id, item_id) VALUES (?, ?)",
-                (chat_id, item_id),
-            )
-            if cursor.rowcount != 1:
-                return "active_event", None
-            event_id = cursor.lastrowid
-            _remember_generated_item(cursor, item_id, generated_name,
-                                     generated_kind, generated_base_form)
+        item_id, generated_name, generated_kind, generated_base_form = _unpack_generated_item(item_selector())
+        if item_id in ("oiled_vest", "knife"):
+            raise ValueError("Permanent base items cannot be dug up")
+        cursor.execute(
+            "INSERT OR IGNORE INTO duel_item_events (chat_id, item_id) VALUES (?, ?)",
+            (chat_id, item_id),
+        )
+        if cursor.rowcount != 1:
+            return "active_event", None
+        event_id = cursor.lastrowid
+        _remember_generated_item(cursor, item_id, generated_name,
+                                 generated_kind, generated_base_form)
 
         cursor.execute(
             """
@@ -1883,7 +1881,7 @@ def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, 
         if cursor.rowcount != 1:
             raise RuntimeError("Dig daily limit changed during locked transaction")
 
-        return ("found" if found else "miss"), {
+        return "found", {
             "chat_id": chat_id,
             "user_id": user_id,
             "profile_reset_at_ms": gnome_profile_reset_at_ms_in_transaction(cursor, user_id),

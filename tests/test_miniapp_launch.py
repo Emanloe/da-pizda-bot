@@ -21,8 +21,12 @@ def update(chat_id, chat_type, user_id=101):
 
 
 @pytest.mark.asyncio
-async def test_group_command_issues_bound_link_without_game_rng(temp_database, monkeypatch):
+@pytest.mark.parametrize("command", ["app", "duel_app"])
+async def test_group_command_issues_bound_link_without_game_rng(
+    temp_database, monkeypatch, command,
+):
     request = update(-9901, "supergroup")
+    request.message.text = f"/{command}"
     database.get_or_create_duel_user(request.effective_user, -9901)
     sent = request.message.reply_text.return_value
 
@@ -44,6 +48,7 @@ async def test_group_command_issues_bound_link_without_game_rng(temp_database, m
     assert reply.args == ("Мини-приложение для этого чата:",)
     assert reply.kwargs == {}
     button = sent.edit_reply_markup.await_args.kwargs["reply_markup"].inline_keyboard[0][0]
+    assert button.text == "Открыть приложение"
     parsed = urlparse(button.url)
     assert parsed.scheme == "https" and parsed.netloc == "t.me"
     launch = parse_qs(parsed.query)["startapp"][0]
@@ -102,7 +107,7 @@ async def test_private_and_unregistered_user_get_no_token(temp_database):
     context = SimpleNamespace(bot=SimpleNamespace(username="ExampleBot"))
     await duel_app_command(private, context)
     await duel_app_command(missing, context)
-    assert "группе" in private.message.reply_text.await_args.args[0]
+    assert private.message.reply_text.await_args.args[0] == "Откройте /app в группе, где идёт игра."
     assert "зарегистрируйтесь" in missing.message.reply_text.await_args.args[0]
     private.message.delete.assert_not_awaited()
     missing.message.delete.assert_awaited_once_with()

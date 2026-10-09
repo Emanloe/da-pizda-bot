@@ -41,6 +41,17 @@ def points(db, user_id=1, chat_id=CHAT_ID):
     return row[0] if row else None
 
 
+def claim_find(db, chat_id, user_id, found):
+    """Clear the shared pickup slot before the next allowed dig."""
+    assert db.set_duel_item_event_message(found["event_id"],
+                                          found["event_id"] + 1000, "Находка")
+    status, _ = db.claim_duel_item_event(
+        found["event_id"], chat_id, user_id,
+        Mock(side_effect=AssertionError("fixed dig loot rerolled")),
+    )
+    assert status == "claimed"
+
+
 def update(tg_user, chat_id=CHAT_ID):
     return SimpleNamespace(
         effective_chat=SimpleNamespace(id=chat_id), effective_user=tg_user,
@@ -72,8 +83,9 @@ def test_moscow_day_boundary_and_idempotent_existing_db_migration(tmp_path, monk
     monkeypatch.setattr(db, "DB_NAME", str(path))
     db.init_db()
     register(db)
-    status, _ = db.try_duel_dig(CHAT_ID, 1, lambda: 1.0, lambda: None)
-    assert status == "miss"
+    status, found = db.try_duel_dig(CHAT_ID, 1, lambda: 1.0,
+                                    lambda: "vevangel_wing")
+    assert status == "found" and found["event_id"] is not None
     db.init_db()
     assert db.get_duel_dig_attempts(CHAT_ID, 1, db.moscow_date_key()) == 1
     with sqlite3.connect(path) as conn:
@@ -114,7 +126,7 @@ async def test_unregistered_low_points_and_active_slot_reject_before_rng(
 
 
 @pytest.mark.asyncio
-async def test_exactly_ten_points_miss_costs_one_roll_and_one_attempt(
+async def test_exactly_ten_points_always_finds_and_costs_one_attempt(
     frozen_dig_date, fake_context, monkeypatch,
 ):
     import database as db
@@ -122,20 +134,20 @@ async def test_exactly_ten_points_miss_costs_one_roll_and_one_attempt(
 
     register(db, points=10)
     roll = Mock(return_value=0.20)
-    choice = Mock(side_effect=AssertionError("miss chose item"))
+    choice = Mock(return_value=("dig_exactly_ten", "Находка"))
     monkeypatch.setattr(dig.random, "random", roll)
-    monkeypatch.setattr(dig.random, "choice", choice)
+    monkeypatch.setattr(dig, "roll_generated_item", choice)
     await dig.dig_command(update(user(1)), fake_context)
 
-    roll.assert_called_once_with()
-    choice.assert_not_called()
+    roll.assert_not_called()
+    choice.assert_called_once_with()
     assert points(db) == 0
     assert db.get_duel_dig_attempts(CHAT_ID, 1, TODAY) == 1
-    assert "Нихуя не откопал" in fake_context.bot.send_message.await_args.kwargs["text"]
+    assert "Найдено:" in fake_context.bot.send_message.await_args.kwargs["text"]
     assert "Попыток осталось сегодня: 4" in fake_context.bot.send_message.await_args.kwargs["text"]
     assert "Очков осталось: 0" in fake_context.bot.send_message.await_args.kwargs["text"]
     with db.get_db() as conn:
-        assert conn.execute("SELECT COUNT(*) FROM duel_item_events").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM duel_item_events").fetchone()[0] == 1
 
 
 @pytest.mark.asyncio
@@ -175,7 +187,7 @@ async def test_hit_uses_common_catalog_and_publishes_exact_item_without_auto_awa
     monkeypatch.setattr(dig, "roll_generated_item", choice)
     await dig.dig_command(update(user(1)), fake_context)
 
-    roll.assert_called_once_with()
+    roll.assert_not_called()
     choice.assert_called_once_with()
     assert selected[0] not in BASE_DUEL_ITEM_IDS
     assert points(db) == 40
@@ -241,20 +253,22 @@ def test_daily_limit_and_next_moscow_day_are_scoped_per_chat(frozen_dig_date):
 
     register(db, 1, CHAT_ID, points=100)
     register(db, 1, CHAT_ID - 1, points=100)
-    roll = Mock(return_value=1.0)
-    choice = Mock(side_effect=AssertionError("miss chose item"))
+    roll = Mock(side_effect=AssertionError("dig discovery used RNG"))
+    choice = Mock(return_value="vevangel_wing")
     for _ in range(5):
-        assert db.try_duel_dig(CHAT_ID, 1, roll, choice)[0] == "miss"
+        status, found = db.try_duel_dig(CHAT_ID, 1, roll, choice)
+        assert status == "found"
+        claim_find(db, CHAT_ID, 1, found)
     assert points(db) == 50
     assert db.get_duel_dig_attempts(CHAT_ID, 1, TODAY) == 5
     assert db.try_duel_dig(CHAT_ID, 1, roll, choice)[0] == "daily_limit"
-    assert roll.call_count == 5
+    roll.assert_not_called()
     assert points(db) == 50
-    assert db.try_duel_dig(CHAT_ID - 1, 1, roll, choice)[0] == "miss"
+    assert db.try_duel_dig(CHAT_ID - 1, 1, roll, choice)[0] == "found"
     assert db.get_duel_dig_attempts(CHAT_ID - 1, 1, TODAY) == 1
 
     frozen_dig_date[0] = datetime(2026, 9, 30, 21, 0, tzinfo=timezone.utc)
-    assert db.try_duel_dig(CHAT_ID, 1, roll, choice)[0] == "miss"
+    assert db.try_duel_dig(CHAT_ID, 1, roll, choice)[0] == "found"
     assert db.get_duel_dig_attempts(CHAT_ID, 1, TODAY) == 5
     assert db.get_duel_dig_attempts(CHAT_ID, 1, TOMORROW) == 1
     assert points(db) == 40
@@ -264,24 +278,33 @@ def test_concurrent_digs_cannot_exceed_limit_or_overdraw_points(frozen_dig_date)
     import database as db
 
     register(db, points=100)
-    with ThreadPoolExecutor(max_workers=10) as pool:
-        results = list(pool.map(
-            lambda _: db.try_duel_dig(CHAT_ID, 1, lambda: 1.0, lambda: None)[0],
-            range(12),
-        ))
-    assert results.count("miss") == 5
-    assert results.count("daily_limit") == 7
+    for _ in range(5):
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            results = list(pool.map(
+                lambda _: db.try_duel_dig(CHAT_ID, 1, lambda: 1.0,
+                                          lambda: "vevangel_wing"), range(12),
+            ))
+        assert [status for status, _ in results].count("found") == 1
+        assert [status for status, _ in results].count("active_event") == 11
+        claim_find(db, CHAT_ID, 1, next(found for status, found in results
+                                       if status == "found"))
+    assert db.try_duel_dig(CHAT_ID, 1, lambda: 1.0,
+                           lambda: "vevangel_wing")[0] == "daily_limit"
     assert points(db) == 50
     assert db.get_duel_dig_attempts(CHAT_ID, 1, TODAY) == 5
 
     register(db, 2, points=20)
+    for _ in range(2):
+        status, found = db.try_duel_dig(CHAT_ID, 2, lambda: 1.0,
+                                        lambda: "vevangel_wing")
+        assert status == "found"
+        claim_find(db, CHAT_ID, 2, found)
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(
-            lambda _: db.try_duel_dig(CHAT_ID, 2, lambda: 1.0, lambda: None)[0],
-            range(8),
+            lambda _: db.try_duel_dig(CHAT_ID, 2, lambda: 1.0,
+                                      lambda: "vevangel_wing")[0], range(8),
         ))
-    assert results.count("miss") == 2
-    assert results.count("insufficient_points") == 6
+    assert results.count("insufficient_points") == 8
     assert points(db, 2) == 0
 
 
@@ -304,7 +327,7 @@ def test_concurrent_hits_create_one_active_event_and_charge_only_one(frozen_dig_
         assert conn.execute("SELECT COUNT(*) FROM duel_item_events WHERE claimed = 0").fetchone()[0] == 1
 
 
-def test_hit_insert_conflict_after_rng_does_not_charge_or_reroll(frozen_dig_date, temp_database):
+def test_hit_insert_conflict_after_selection_does_not_charge_or_reroll(frozen_dig_date, temp_database):
     import database as db
 
     register(db)
@@ -320,7 +343,7 @@ def test_hit_insert_conflict_after_rng_does_not_charge_or_reroll(frozen_dig_date
     roll = Mock(return_value=0.0)
     choice = Mock(return_value="vevangel_wing")
     assert db.try_duel_dig(CHAT_ID, 1, roll, choice)[0] == "active_event"
-    roll.assert_called_once_with()
+    roll.assert_not_called()
     choice.assert_called_once_with()
     assert points(db) == 50
     assert db.get_duel_dig_attempts(CHAT_ID, 1, TODAY) == 0
@@ -445,18 +468,16 @@ def test_base_item_id_is_rejected_without_charge(frozen_dig_date):
     assert db.get_duel_dig_attempts(CHAT_ID, 1, TODAY) == 0
 
 
-def test_dig_uses_existing_equal_weight_catalog_and_chance():
-    from config import DIG_FIND_CHANCE
+def test_dig_uses_existing_equal_weight_catalog():
     from handlers.duel_items import BASE_DUEL_ITEM_IDS, DUEL_ITEMS
 
-    assert DIG_FIND_CHANCE == 0.20
     assert DUEL_ITEMS
     assert all(item["id"] not in BASE_DUEL_ITEM_IDS for item in DUEL_ITEMS)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", [
-    "unregistered", "insufficient_points", "daily_limit", "active_event", "miss",
+    "unregistered", "insufficient_points", "daily_limit", "active_event",
 ])
 async def test_dig_ordinary_responses_and_command_are_deleted_after_10_seconds(
     outcome, frozen_dig_date, fake_context, monkeypatch,
@@ -475,7 +496,10 @@ async def test_dig_ordinary_responses_and_command_are_deleted_after_10_seconds(
             )
     elif outcome == "daily_limit":
         for _ in range(5):
-            assert db.try_duel_dig(CHAT_ID, 1, lambda: 1.0, lambda: None)[0] == "miss"
+            status, found = db.try_duel_dig(CHAT_ID, 1, lambda: 1.0,
+                                            lambda: "vevangel_wing")
+            assert status == "found"
+            claim_find(db, CHAT_ID, 1, found)
     elif outcome == "active_event":
         db.create_duel_item_event(CHAT_ID)
 
@@ -493,7 +517,7 @@ async def test_dig_ordinary_responses_and_command_are_deleted_after_10_seconds(
         [900], [101],
     ]
     assert all(call[2]["data"]["chat_id"] == CHAT_ID for call in fake_context.job_queue.calls)
-    assert roll.call_count == (1 if outcome == "miss" else 0)
+    roll.assert_not_called()
     choice.assert_not_called()
 
 
@@ -523,7 +547,7 @@ async def test_dig_find_deletes_only_command_and_preserves_pickup_message(
                    ))
     assert db.get_duel_item_event(event_id)["claimed"] is False
     assert db.get_duel_item_event(event_id)["message_id"] == 101
-    roll.assert_called_once_with()
+    roll.assert_not_called()
     choice.assert_called_once_with()
 
 
@@ -542,7 +566,7 @@ async def test_dig_delete_failures_do_not_change_completed_attempt(
         fake_context.job.data = kwargs["data"]
         await callback(fake_context)
 
-    assert fake_context.bot.delete_message.await_count == 2
+    assert fake_context.bot.delete_message.await_count == 1
     assert db.get_duel_dig_attempts(CHAT_ID, 1, TODAY) == 1
     assert points(db) == 40
 

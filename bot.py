@@ -137,7 +137,7 @@ BOT_COMMANDS = [
     BotCommand("toggle_forward", get_text("menu.commands.toggle_forward")),
     BotCommand("toggle_autodelete", get_text("menu.commands.toggle_autodelete")),
     BotCommand("duel", get_text("menu.commands.duel")),
-    BotCommand("duel_app", "Дуэли: мини-приложение"),
+    BotCommand("app", get_text("menu.commands.app")),
     BotCommand("name", get_text("menu.commands.name")),
     BotCommand("summary", get_text("menu.commands.summary")),
     BotCommand("dig", get_text("menu.commands.dig")),
@@ -417,7 +417,7 @@ async def main():
             duel_command,
         )
     )
-    application.add_handler(CommandHandler("duel_app", duel_app_command))
+    application.add_handler(CommandHandler(("app", "duel_app"), duel_app_command))
 
     application.add_handler(CommandHandler("name", name_command))
     application.add_handler(CommandHandler("summary", summary_command))

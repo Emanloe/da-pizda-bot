@@ -17,7 +17,7 @@ async def _delete_command(message, chat_id: int) -> None:
     try:
         await message.delete()
     except Exception as exc:
-        logging.warning("Could not delete /duel_app command in chat %s: %s", chat_id, exc)
+        logging.warning("Could not delete Mini App command in chat %s: %s", chat_id, exc)
 
 
 async def _reply_and_delete_command(message, chat_id: int, text: str, **kwargs) -> None:
@@ -32,7 +32,7 @@ async def duel_app_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if message is None or chat is None or user is None:
         return
     if chat.type not in ("group", "supergroup"):
-        await message.reply_text("Откройте /duel_app в группе, где идёт игра.")
+        await message.reply_text("Откройте /app в группе, где идёт игра.")
         return
     if get_duel_profile(chat.id, user.id, read_only=True) is None:
         await _reply_and_delete_command(
@@ -50,7 +50,7 @@ async def duel_app_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Telegram routes this startapp parameter to the bot's configured Main Mini App.
     token = create_launch_token(chat.id, user.id)
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("Открыть дуэли", url=f"https://t.me/{username}?startapp={token}"),
+        InlineKeyboardButton("Открыть приложение", url=f"https://t.me/{username}?startapp={token}"),
     ]])
     # The button becomes visible only after its message ID is committed.
     launch_message = await message.reply_text("Мини-приложение для этого чата:")

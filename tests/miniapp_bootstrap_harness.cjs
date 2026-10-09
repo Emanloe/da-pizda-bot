@@ -51,7 +51,7 @@ async function scenario({ webApp, scriptEvent = null, search = "", apiResult, ho
   assert.equal(absent.events[0][1].has_web_app, false);
   assert.equal(absent.calls.length, 0);
   assert.equal(absent.messages[0].code, "DBG: TG_SCRIPT_UNKNOWN_NO_WEBAPP");
-  assert.ok(absent.messages[0].message.includes("/duel_app"));
+  assert.ok(absent.messages[0].message.includes("/app"));
 
   const failedScript = await scenario({ scriptEvent: "error" });
   assert.equal(failedScript.messages[0].code, "DBG: TG_SCRIPT_ERROR");

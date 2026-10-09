@@ -21,7 +21,7 @@ CALLBACK_PREFIX = "dickpukku:"
 _confirmations = {}
 _confirmation_lock = asyncio.Lock()
 _GAME_COMMANDS = frozenset({
-    "duel", "duel_app", "name", "dig", "ball", "duel_stats", "inspect",
+    "duel", "app", "duel_app", "name", "dig", "ball", "duel_stats", "inspect",
     "duel_top", "duel_delete", "boss", "boss_reg", "gnomed",
 })
 _GAME_CALLBACK_PREFIXES = (
