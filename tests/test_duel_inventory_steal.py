@@ -34,7 +34,8 @@ def install_finish_persistence(monkeypatch, duel, events=None):
             events.append("ordinary_result_applied")
         return 30, 15
 
-    monkeypatch.setattr(duel, "apply_duel_result_plan", apply_result)
+    monkeypatch.setattr(duel, "get_duel_points_in_transaction", lambda *_args: (20, 20))
+    monkeypatch.setattr(duel, "apply_duel_result_plan_in_transaction", apply_result)
 
 
 @pytest.mark.asyncio

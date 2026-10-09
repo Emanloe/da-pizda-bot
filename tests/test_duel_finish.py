@@ -82,6 +82,8 @@ def test_finish_yaml_templates_preserve_exact_output_structure():
         loser_title="Проигравший",
         winner_points=50,
         loser_points=15,
+        winner_delta=10,
+        loser_delta=-5,
     )
     stats = get_text(
         "duel.finish.stats",
@@ -572,7 +574,9 @@ async def test_finish_duel_post_message_is_escaped_and_appended_last(
         Mock(side_effect=(0.99, duel.BERSERK_CHANCE, 0.099999)),
     )
     monkeypatch.setattr(duel.random, "choice", choose)
-    monkeypatch.setattr(duel, "apply_duel_result_plan", lambda *_: (30, 15))
+    monkeypatch.setattr(duel, "get_db", lambda: sqlite3.connect(":memory:"))
+    monkeypatch.setattr(duel, "get_duel_points_in_transaction", lambda *_: (20, 20))
+    monkeypatch.setattr(duel, "apply_duel_result_plan_in_transaction", lambda *_: (30, 15))
     fake_context.bot.send_message = AsyncMock(
         return_value=SimpleNamespace(message_id=1004)
     )
@@ -642,7 +646,9 @@ async def test_finish_duel_rng_orders_berserk_after_all_existing_finish_rng(
 
     monkeypatch.setattr(duel.random, "random", random_roll)
     monkeypatch.setattr(duel.random, "choice", choose)
-    monkeypatch.setattr(duel, "apply_duel_result_plan", apply_result)
+    monkeypatch.setattr(duel, "get_db", lambda: sqlite3.connect(":memory:"))
+    monkeypatch.setattr(duel, "get_duel_points_in_transaction", lambda *_: (20, 20))
+    monkeypatch.setattr(duel, "apply_duel_result_plan_in_transaction", apply_result)
     monkeypatch.setattr(duel, "apply_duel_berserk", apply_berserk)
     fake_context.bot.send_message = AsyncMock(
         return_value=SimpleNamespace(message_id=1003)
@@ -700,7 +706,7 @@ async def test_finish_duel_transaction_error_clears_state_and_schedules_error(
     monkeypatch.setattr(duel.random, "choice", presentation_choice)
     monkeypatch.setattr(
         duel,
-        "apply_duel_result_plan",
+        "apply_duel_result_plan_in_transaction",
         Mock(side_effect=RuntimeError("database failed")),
     )
     fake_context.bot.send_message = AsyncMock(

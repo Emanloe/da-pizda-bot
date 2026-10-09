@@ -89,7 +89,7 @@ def _build_duel_result_plan(
     max_daily_points: int,
 ) -> dict:
     winner_points = max(0, min(max_daily_points, winner["points"] + DUEL_WIN_POINTS_AWARD))
-    loser_points = max(0, loser["points"] + DUEL_LOSS_POINTS_AWARD)
+    loser_points = max(0, min(max_daily_points, loser["points"] + DUEL_LOSS_POINTS_AWARD))
     result_plan = {
         "is_dick_stolen": is_dick_stolen,
         "winner_reached_max": (

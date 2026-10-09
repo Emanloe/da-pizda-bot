@@ -274,6 +274,10 @@ def _finished_duel_read_model(session: dict) -> dict | None:
             "text": _plain_duel_text(berserk.get("text")),
         }
     duration_rounds = session["round_no"]
+    winner_before = (result["winner_points_before"] if type(result.get("winner_points_before")) is int
+                     else snapshots[winner_id]["points"])
+    loser_before = (result["loser_points_before"] if type(result.get("loser_points_before")) is int
+                    else snapshots[loser_id]["points"])
     return {
         "id": session["id"], "status": "finished", "finished_at": session["finished_at"],
         "player1": _duel_participant(session, session["player1_user_id"]),
@@ -281,14 +285,14 @@ def _finished_duel_read_model(session: dict) -> dict | None:
         "winner": _duel_participant(session, winner_id),
         "loser": _duel_participant(session, loser_id),
         "points": {
-            "winner_before": snapshots[winner_id]["points"],
+            "winner_before": winner_before,
             "winner_after": result["winner_points"],
-            "winner_delta": result["winner_points"] - snapshots[winner_id]["points"],
+            "winner_delta": result["winner_points"] - winner_before,
             "winner_delta_awarded": result.get("winner_points_awarded") if type(
                 result.get("winner_points_awarded")) is int else None,
-            "loser_before": snapshots[loser_id]["points"],
+            "loser_before": loser_before,
             "loser_after": result["loser_points"],
-            "loser_delta": result["loser_points"] - snapshots[loser_id]["points"],
+            "loser_delta": result["loser_points"] - loser_before,
             "loser_delta_awarded": result.get("loser_points_awarded") if type(
                 result.get("loser_points_awarded")) is int else None,
         },

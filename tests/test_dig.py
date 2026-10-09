@@ -150,6 +150,17 @@ async def test_exactly_ten_points_always_finds_and_costs_one_attempt(
         assert conn.execute("SELECT COUNT(*) FROM duel_item_events").fetchone()[0] == 1
 
 
+def test_legacy_over_cap_balance_is_normalized_on_dig_and_refund(frozen_dig_date):
+    import database as db
+
+    register(db, points=120)
+    status, found = db.try_duel_dig(CHAT_ID, 1, lambda: 0.0, lambda: "vevangel_wing")
+    assert status == "found" and found["points"] == 100
+    assert points(db) == 100
+    assert db.cancel_unpublished_duel_dig(found)
+    assert points(db) == 100
+
+
 @pytest.mark.asyncio
 async def test_reply_and_arguments_cannot_change_dig_target(
     frozen_dig_date, fake_context, monkeypatch,

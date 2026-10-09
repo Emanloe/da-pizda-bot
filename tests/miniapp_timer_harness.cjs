@@ -430,11 +430,21 @@ assert.equal(intervals.length, 3);
 app.renderDuel({ duel: null, recent_finished: {
   id: 1, player1: { display_name: "A" }, player2: { display_name: "B" },
   winner: { display_name: "A" }, loser: { display_name: "B" },
-  points: { winner_before: 1, winner_after: 2, loser_before: 2, loser_after: 1 },
+  points: { winner_before: 120, winner_after: 100, winner_delta: -20,
+    winner_delta_awarded: 10, loser_before: 20, loser_after: 15, loser_delta: -5,
+    loser_delta_awarded: -5 },
   rounds: [],
 } });
 assert.equal(app.countdownTurn, null);
 assert.equal(nodes.get("duel-content").querySelectorAll(".zone-row button").length, 0);
+const finishedText = [];
+function collectText(node) {
+  finishedText.push(node.textContent);
+  node.children.forEach(collectText);
+}
+collectText(nodes.get("duel-content"));
+assert.ok(finishedText.includes("120 → 100 (-20)"));
+assert.ok(finishedText.includes("20 → 15 (-5)"));
 
 async function testPolling() {
   now = 20_000;

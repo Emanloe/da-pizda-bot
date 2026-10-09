@@ -762,15 +762,15 @@
     addHeading(content, `Дуэль №${finished.id} завершена`);
     content.append(element("p", "hint", `${finished.player1.display_name} против ${finished.player2.display_name}`));
     const points = finished.points;
-    const signed = value => value > 0 ? `+${value}` : String(value);
-    const pointLine = (before, after, awarded) =>
-      `${before} → ${after}${Number.isInteger(awarded) ? ` (${signed(awarded)})` : ""}`;
+    const signed = value => value >= 0 ? `+${value}` : String(value);
+    const pointLine = (before, after, delta) =>
+      `${before} → ${after}${Number.isInteger(delta) ? ` (${signed(delta)})` : ""}`;
     const grid = element("div", "data-grid");
     grid.append(
       dataCell("Победитель", finished.winner.display_name),
       dataCell("Проигравший", finished.loser.display_name),
-      dataCell("Очки победителя", pointLine(points.winner_before, points.winner_after, points.winner_delta_awarded)),
-      dataCell("Очки проигравшего", pointLine(points.loser_before, points.loser_after, points.loser_delta_awarded))
+      dataCell("Очки победителя", pointLine(points.winner_before, points.winner_after, points.winner_delta)),
+      dataCell("Очки проигравшего", pointLine(points.loser_before, points.loser_after, points.loser_delta))
     );
     if (finished.duration?.text) grid.append(dataCell("Длительность", finished.duration.text));
     content.append(grid);

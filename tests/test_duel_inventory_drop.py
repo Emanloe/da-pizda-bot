@@ -182,7 +182,9 @@ async def test_finish_duel_sends_pickup_after_result_without_extra_rng(
     monkeypatch.setattr(duel, "DUEL_POST_MESSAGES", post_catalog)
     monkeypatch.setattr(duel.random, "random", random_roll)
     monkeypatch.setattr(duel.random, "choice", choose)
-    monkeypatch.setattr(duel, "apply_duel_result_plan", lambda *_args: (30, 15))
+    monkeypatch.setattr(duel, "get_db", lambda: sqlite3.connect(":memory:"))
+    monkeypatch.setattr(duel, "get_duel_points_in_transaction", lambda *_args: (20, 20))
+    monkeypatch.setattr(duel, "apply_duel_result_plan_in_transaction", lambda *_args: (30, 15))
     monkeypatch.setattr(
         duel,
         "apply_duel_berserk",

@@ -102,7 +102,7 @@ def _claim_event(event_id: int, chat_id: int, message_id: int, user_id: int, cho
             return "not_registered", None
         if choice == "clever":
             cursor.execute(
-                "UPDATE duel_users SET points = points + 100 WHERE chat_id = ? AND user_id = ?",
+                "UPDATE duel_users SET points = 100 WHERE chat_id = ? AND user_id = ?",
                 (chat_id, user_id),
             )
         else:

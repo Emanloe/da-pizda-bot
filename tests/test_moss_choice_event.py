@@ -78,7 +78,7 @@ async def test_existing_daily_job_checks_moss_in_each_chat(fake_context, monkeyp
     ]
 
 
-async def test_clever_claim_adds_100_once_and_deletes_only_after_claim(
+async def test_clever_claim_sets_100_once_and_deletes_only_after_claim(
     temp_database, fake_context, tg_user, monkeypatch,
 ):
     from database import get_or_create_duel_user
@@ -93,7 +93,8 @@ async def test_clever_claim_adds_100_once_and_deletes_only_after_claim(
 
     update, query = _update(CHAT_A, tg_user, event_id, "clever")
     await event.moss_choice_callback(update, fake_context)
-    assert _user(temp_database, CHAT_A, tg_user.id)[0] == 120
+    assert _user(temp_database, CHAT_A, tg_user.id)[0] == 100
+    assert "Баланс:" in fake_context.bot.edit_message_text.await_args.kwargs["text"]
     assert _row(temp_database, CHAT_A)[2:] == (tg_user.id, "clever")
     assert "100 очков" in fake_context.bot.edit_message_text.await_args.kwargs["text"]
     assert fake_context.bot.edit_message_text.await_args.kwargs["reply_markup"] is None
@@ -107,9 +108,28 @@ async def test_clever_claim_adds_100_once_and_deletes_only_after_claim(
     fake_context.bot.delete_message.assert_awaited_once_with(chat_id=CHAT_A, message_id=101)
 
     await event.moss_choice_callback(update, fake_context)
-    assert _user(temp_database, CHAT_A, tg_user.id)[0] == 120
+    assert _user(temp_database, CHAT_A, tg_user.id)[0] == 100
     assert fake_context.bot.edit_message_text.await_count == 1
     assert len(fake_context.job_queue.calls) == 1
+
+
+@pytest.mark.parametrize("initial_points", [0, 20, 85, 100])
+async def test_clever_choice_sets_absolute_maximum(
+    temp_database, fake_context, tg_user, monkeypatch, initial_points,
+):
+    from database import get_or_create_duel_user
+    from handlers import moss_choice_event as event
+
+    get_or_create_duel_user(tg_user, CHAT_A)
+    with sqlite3.connect(temp_database) as conn:
+        conn.execute("UPDATE duel_users SET points = ? WHERE chat_id = ? AND user_id = ?",
+                     (initial_points, CHAT_A, tg_user.id))
+    monkeypatch.setattr(event.random, "random", Mock(return_value=0.0))
+    await event.spawn_moss_choice_event(fake_context, CHAT_A, DAY)
+    result, _ = event._claim_event(_row(temp_database, CHAT_A)[0], CHAT_A, 101,
+                                   tg_user.id, "clever")
+    assert result == "claimed"
+    assert _user(temp_database, CHAT_A, tg_user.id)[0] == 100
 
 
 @pytest.mark.parametrize("stolen", [False, True])
@@ -155,7 +175,7 @@ async def test_wrong_chat_and_message_cannot_claim_but_valid_new_user_can(
     update, _ = _update(CHAT_A, tg_user, event_id, "clever")
     await event.moss_choice_callback(update, fake_context)
     assert _row(temp_database, CHAT_A)[2] == tg_user.id
-    assert _user(temp_database, CHAT_A, tg_user.id)[0] == 120
+    assert _user(temp_database, CHAT_A, tg_user.id)[0] == 100
 
 
 async def test_concurrent_callbacks_choose_one_winner_and_keep_chats_separate(
@@ -181,7 +201,7 @@ async def test_concurrent_callbacks_choose_one_winner_and_keep_chats_separate(
     assert sorted(status for status, _ in results) == ["claimed", "taken"]
     assert _row(temp_database, CHAT_A)[2] in (tg_user.id, second.id)
     if _row(temp_database, CHAT_A)[3] == "clever":
-        assert _user(temp_database, CHAT_A, tg_user.id)[0] == 120
+        assert _user(temp_database, CHAT_A, tg_user.id)[0] == 100
         assert _user(temp_database, CHAT_A, second.id)[0] == 20
     else:
         assert _user(temp_database, CHAT_A, tg_user.id)[0] == 20

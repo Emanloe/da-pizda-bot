@@ -27,7 +27,9 @@ from database import (
     get_duel_user_by_username,
     get_duel_user_by_id,
     delete_duel_user_by_username,
-    apply_duel_result_plan,
+    apply_duel_result_plan_in_transaction,
+    get_duel_points_in_transaction,
+    get_db,
     apply_duel_berserk,
     get_duel_top,
     format_user_title,
@@ -1109,17 +1111,22 @@ async def _finish_duel(
     try:
 
         win_title = format_user_title(winner)
-        result_plan = _build_duel_result_plan(
-            winner,
-            loser,
-            is_dick_stolen,
-            format_user_title_plain(winner, include_dwarf_name=False),
-            MAX_DAILY_POINTS,
-        )
-        w_after, l_after = apply_duel_result_plan(
-            chat_id,
-            result_plan,
-        )
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            w_before, l_before = get_duel_points_in_transaction(
+                cursor, chat_id, winner["user_id"], loser["user_id"],
+            )
+            result_plan = _build_duel_result_plan(
+                {**winner, "points": w_before},
+                {**loser, "points": l_before},
+                is_dick_stolen,
+                format_user_title_plain(winner, include_dwarf_name=False),
+                MAX_DAILY_POINTS,
+            )
+            w_after, l_after = apply_duel_result_plan_in_transaction(
+                cursor, chat_id, result_plan,
+            )
 
     except Exception:
 
@@ -1156,6 +1163,8 @@ async def _finish_duel(
         loser_title=lose_title,
         winner_points=w_after,
         loser_points=l_after,
+        winner_delta=w_after - w_before,
+        loser_delta=l_after - l_before,
     )
 
     stats_text = get_text(

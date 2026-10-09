@@ -22,12 +22,12 @@ def no_rng(*_args, **_kwargs):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("winner_before,loser_before,winner_after,loser_after", [
-    (10, 95, 20, 90),
-    (100, 95, 100, 90),
-    (10, 0, 20, 0),
-    (10, 1, 20, 0),
+    (90, 20, 100, 15),
+    (95, 3, 100, 0),
+    (100, 0, 100, 0),
+    (120, 20, 100, 15),
 ])
-async def test_awarded_points_remain_distinct_from_actual_balance_change(
+async def test_finished_points_use_live_balance_and_actual_change(
     temp_database, monkeypatch, winner_before, loser_before, winner_after, loser_after,
 ):
     register(CHAT_A)
@@ -36,8 +36,12 @@ async def test_awarded_points_remain_distinct_from_actual_balance_change(
     trace = TraceRng([0.99, 0.99, 0.99] if loser_before else [0.99, 0.99])
     monkeypatch.setattr(duel_service, "random", trace)
     finalized = duel_service.finalize_persistent_duel(CHAT_A, session["id"], now_ms=NOW + 1)
-    assert finalized.result["winner_points_awarded"] == 10
-    assert finalized.result["loser_points_awarded"] == -5
+    assert finalized.result["winner_points_awarded"] == max(0, winner_after - winner_before)
+    assert finalized.result["loser_points_awarded"] == loser_after - loser_before
+    assert finalized.result["winner_points_delta"] == winner_after - winner_before
+    assert finalized.result["loser_points_delta"] == loser_after - loser_before
+    assert f"{winner_after - winner_before:+d} очков" in finalized.result["final_text"]
+    assert f"{loser_after - loser_before:+d} очков" in finalized.result["final_text"]
 
     monkeypatch.setattr(duel_service, "random", SimpleNamespace(random=no_rng, choice=no_rng))
     api = create_miniapp_api(bot_token=TEST_BOT_TOKEN, allowed_origin="")
@@ -49,9 +53,11 @@ async def test_awarded_points_remain_distinct_from_actual_balance_change(
         ]["points"]
     assert points == {
         "winner_before": winner_before, "winner_after": winner_after,
-        "winner_delta": winner_after - winner_before, "winner_delta_awarded": 10,
+        "winner_delta": winner_after - winner_before,
+        "winner_delta_awarded": max(0, winner_after - winner_before),
         "loser_before": loser_before, "loser_after": loser_after,
-        "loser_delta": loser_after - loser_before, "loser_delta_awarded": -5,
+        "loser_delta": loser_after - loser_before,
+        "loser_delta_awarded": loser_after - loser_before,
     }
 
 
@@ -146,7 +152,8 @@ async def test_old_finished_result_without_new_optional_fields_is_readable_witho
     session = terminal_session(CHAT_A)
     monkeypatch.setattr(duel_service, "random", TraceRng([0.99, 0.99, 0.99]))
     result = duel_service.finalize_persistent_duel(CHAT_A, session["id"]).result
-    for key in ("winner_points_awarded", "loser_points_awarded", "round_flavor",
+    for key in ("winner_points_before", "loser_points_before", "winner_points_delta",
+                "loser_points_delta", "winner_points_awarded", "loser_points_awarded", "round_flavor",
                 "dwarf_fact", "post_message", "berserk"):
         result.pop(key, None)
     result["terminal_resolution"].pop("presentation_html", None)
@@ -167,3 +174,35 @@ async def test_old_finished_result_without_new_optional_fields_is_readable_witho
     assert finished["dwarf_fact"] is None
     assert finished["post_message"] is None
     assert finished["rounds"][-1]["presentation_text"]
+
+
+@pytest.mark.asyncio
+async def test_historical_over_cap_result_uses_snapshot_without_rewriting_history(
+    temp_database, monkeypatch,
+):
+    register(CHAT_A)
+    session = terminal_session(CHAT_A, winner_points=120)
+    monkeypatch.setattr(duel_service, "random", TraceRng([0.99, 0.99, 0.99]))
+    result = duel_service.finalize_persistent_duel(CHAT_A, session["id"]).result
+    for key in ("winner_points_before", "loser_points_before",
+                "winner_points_delta", "loser_points_delta"):
+        result.pop(key)
+    result["winner_points_awarded"] = 10  # Older records stored nominal reward.
+    historical_json = json.dumps(result)
+    with database.get_db() as conn:
+        conn.execute("UPDATE duel_sessions SET result_json = ? WHERE id = ?",
+                     (historical_json, session["id"]))
+    monkeypatch.setattr(duel_service, "random", SimpleNamespace(random=no_rng, choice=no_rng))
+    api = create_miniapp_api(bot_token=TEST_BOT_TOKEN, allowed_origin="")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api),
+                                 base_url="http://test") as client:
+        headers = await session_for(client, CHAT_A, 1)
+        points = (await client.get("/api/v1/duel/active", headers=headers)).json()[
+            "recent_finished"]["points"]
+    assert points["winner_before"] == 120
+    assert points["winner_after"] == 100
+    assert points["winner_delta"] == -20
+    assert points["winner_delta_awarded"] == 10
+    with database.get_db() as conn:
+        assert conn.execute("SELECT result_json FROM duel_sessions WHERE id = ?",
+                            (session["id"],)).fetchone()[0] == historical_json

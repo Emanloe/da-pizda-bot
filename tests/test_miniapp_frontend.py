@@ -388,9 +388,9 @@ def test_frontend_routes_include_authorized_equipment_actions():
     assert 'round.timeout_texts || []' in js
     assert 'round.presentation_text' in js
     assert 'Время вышло: ${round.timed_out' not in js
-    assert 'Number.isInteger(awarded)' in js
-    assert 'points.winner_delta_awarded' in js
-    assert 'points.loser_delta_awarded' in js
+    assert 'Number.isInteger(delta)' in js
+    assert 'points.winner_delta)' in js
+    assert 'points.loser_delta)' in js
     assert 'finished.duration?.text' in js
     assert 'finished.round_flavor' in js
     assert 'finished.dwarf_fact' in js

@@ -387,16 +387,16 @@ async def test_suicide_skips_miss_roll_and_awards_defender(
         observed_rolls.append(value)
         return value
 
-    real_apply_result_plan = duel.apply_duel_result_plan
+    real_apply_result_plan = duel.apply_duel_result_plan_in_transaction
     persistence_calls = []
 
-    def apply_result_plan(chat_id, result_plan):
+    def apply_result_plan(cursor, chat_id, result_plan):
         assert observed_rolls == [0.0, 1.0]
         persistence_calls.append((chat_id, result_plan))
-        return real_apply_result_plan(chat_id, result_plan)
+        return real_apply_result_plan(cursor, chat_id, result_plan)
 
     monkeypatch.setattr(duel.random, "random", random_roll)
-    monkeypatch.setattr(duel, "apply_duel_result_plan", apply_result_plan)
+    monkeypatch.setattr(duel, "apply_duel_result_plan_in_transaction", apply_result_plan)
 
     await duel._start_interactive_fight(
         fake_context,

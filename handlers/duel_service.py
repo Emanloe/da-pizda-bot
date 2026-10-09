@@ -23,6 +23,7 @@ from database import (
     get_duel_top,
     get_duel_user_by_id,
     get_duel_user_by_id_in_transaction,
+    get_duel_points_in_transaction,
     get_duel_user_by_username,
     consume_equipped_item_for_hit_in_transaction,
     gnome_profile_reset_at_ms_in_transaction,
@@ -53,9 +54,7 @@ from handlers.duel_items import (
     format_pocket_drop_announcement, get_droppable_duel_inventory, get_duel_item_name,
 )
 from handlers.duel_state import (
-    DUEL_LOSS_POINTS_AWARD,
     DUEL_MOVE_TIMEOUT_SECONDS,
-    DUEL_WIN_POINTS_AWARD,
     _build_duel_result_plan,
     _get_duel_participant_ineligibility,
     _is_berserk_roll,
@@ -327,14 +326,21 @@ def finalize_persistent_duel(
             loser["points"] == 0
             or random.random() < get_dick_steal_chance(loser["daily_wins"])
         )
+        winner_before, loser_before = get_duel_points_in_transaction(
+            cursor, chat_id, winner["user_id"], loser["user_id"],
+        )
         plan = _build_duel_result_plan(
-            winner, loser, is_dick_stolen,
+            {**winner, "points": winner_before},
+            {**loser, "points": loser_before},
+            is_dick_stolen,
             format_user_title_plain(winner, include_dwarf_name=False),
             MAX_DAILY_POINTS,
         )
         winner_points, loser_points = apply_duel_result_plan_in_transaction(
             cursor, chat_id, plan,
         )
+        winner_delta = winner_points - winner_before
+        loser_delta = loser_points - loser_before
 
         stolen_item = None
         if is_dick_stolen:
@@ -356,6 +362,7 @@ def finalize_persistent_duel(
             "duel.finish.result", custom_text=custom_text,
             winner_title=winner_title, loser_title=loser_title,
             winner_points=winner_points, loser_points=loser_points,
+            winner_delta=winner_delta, loser_delta=loser_delta,
         )
         round_flavor = get_round_flavor_text(session["round_no"], rng=random)
         stats_text = get_text(
@@ -417,8 +424,12 @@ def finalize_persistent_duel(
             "kind": "finalized", "terminal_resolution": checkpoint,
             "winner_user_id": winner["user_id"], "loser_user_id": loser["user_id"],
             "winner_points": winner_points, "loser_points": loser_points,
-            "winner_points_awarded": DUEL_WIN_POINTS_AWARD,
-            "loser_points_awarded": DUEL_LOSS_POINTS_AWARD,
+            "winner_points_before": winner_before,
+            "loser_points_before": loser_before,
+            "winner_points_delta": winner_delta,
+            "loser_points_delta": loser_delta,
+            "winner_points_awarded": max(0, winner_delta),
+            "loser_points_awarded": loser_delta,
             "winner_reached_max": plan["winner_reached_max"],
             "is_dick_stolen": is_dick_stolen, "stolen_item": stolen_item,
             "round_flavor": round_flavor, "dwarf_fact": dwarf_fact,

@@ -328,8 +328,8 @@ finish:
     Победитель: <b>{winner_title}</b>
     Проигравший: <b>{loser_title}</b>
 
-    <b>{winner_title}</b>: +10 очков ({winner_points}/100)
-    <b>{loser_title}</b>: -5 очков ({loser_points}/100)
+    <b>{winner_title}</b>: {winner_delta:+d} очков ({winner_points}/100)
+    <b>{loser_title}</b>: {loser_delta:+d} очков ({loser_points}/100)
   stats: |
 
     📊 Длительность: <b>{rounds_count}</b> {rounds_label}

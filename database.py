@@ -1240,6 +1240,23 @@ def apply_duel_result_plan(
         return apply_duel_result_plan_in_transaction(cursor, chat_id, result_plan)
 
 
+def get_duel_points_in_transaction(
+    cursor, chat_id: int, winner_user_id: int, loser_user_id: int,
+) -> tuple[int, int]:
+    """Read live balances under the caller's duel-finalization write lock."""
+    if (is_deleted_user_in_transaction(cursor, winner_user_id)
+            or is_deleted_user_in_transaction(cursor, loser_user_id)):
+        raise DeletedGnomeError("duel participant deleted")
+    rows = dict(cursor.execute(
+        """SELECT user_id, points FROM duel_users
+           WHERE chat_id = ? AND user_id IN (?, ?)""",
+        (chat_id, winner_user_id, loser_user_id),
+    ))
+    if winner_user_id == loser_user_id or len(rows) != 2:
+        raise ValueError("Duel participant balance unavailable")
+    return rows[winner_user_id], rows[loser_user_id]
+
+
 def apply_duel_result_plan_in_transaction(
     cursor, chat_id: int, result_plan: dict,
 ) -> tuple[int, int]:
@@ -1893,12 +1910,13 @@ def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, 
         _remember_generated_item(cursor, item_id, generated_name,
                                  generated_kind, generated_base_form)
 
+        points_after = min(100, max(0, user[0] - 10))
         cursor.execute(
             """
-            UPDATE duel_users SET points = points - 10
+            UPDATE duel_users SET points = ?
             WHERE chat_id = ? AND user_id = ? AND points >= 10
             """,
-            (chat_id, user_id),
+            (points_after, chat_id, user_id),
         )
         if cursor.rowcount != 1:
             raise RuntimeError("Dig points changed during locked transaction")
@@ -1919,7 +1937,7 @@ def try_duel_dig(chat_id: int, user_id: int, roll, item_selector) -> tuple[str, 
             "user_id": user_id,
             "profile_reset_at_ms": gnome_profile_reset_at_ms_in_transaction(cursor, user_id),
             "date_key": date_key,
-            "points": user[0] - 10,
+            "points": points_after,
             "remaining": 4 - attempts,
             "event_id": event_id,
             "item_id": item_id,
@@ -1955,7 +1973,7 @@ def cancel_unpublished_duel_dig(dig: dict, message_id: int | None = None) -> boo
         if not cursor.fetchone():
             return False
         cursor.execute(
-            "UPDATE duel_users SET points = points + 10 WHERE chat_id = ? AND user_id = ?",
+            "UPDATE duel_users SET points = MIN(100, MAX(0, points + 10)) WHERE chat_id = ? AND user_id = ?",
             (dig["chat_id"], dig["user_id"]),
         )
         if cursor.rowcount != 1:

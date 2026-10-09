@@ -33,6 +33,11 @@ def snapshot(user_id, *, points=20, daily_wins=0, dwarf_name=None):
 def terminal_session(chat_id=CHAT, *, outcome="hit", winner_points=20,
                      loser_points=20, loser_daily_wins=0, dwarf_name=None):
     winner_id, loser_id = ((1, 2) if outcome == "hit" else (2, 1))
+    with database.get_db() as conn:
+        conn.execute("UPDATE duel_users SET points = ? WHERE chat_id = ? AND user_id = ?",
+                     (winner_points, chat_id, winner_id))
+        conn.execute("UPDATE duel_users SET points = ? WHERE chat_id = ? AND user_id = ?",
+                     (loser_points, chat_id, loser_id))
     checkpoint = {
         "kind": "terminal_resolution", "outcome": outcome,
         "outcome_phrase": "Конец.",
@@ -175,7 +180,7 @@ def test_rejected_finish_has_zero_rng(temp_database, monkeypatch, mode, expected
     assert row(temp_database, CHAT, 1)[1] == 0
 
 
-def test_snapshot_points_names_and_daily_wins_are_immutable(
+def test_live_points_preserve_snapshot_names_and_daily_wins(
     temp_database, monkeypatch,
 ):
     register()
@@ -192,10 +197,42 @@ def test_snapshot_points_names_and_daily_wins_are_immutable(
     rng(monkeypatch, [0.99, 0.99, 0.99])
     result = duel_service.finalize_persistent_duel(CHAT, session["id"])
     assert seen == [3]
-    assert row(temp_database, CHAT, 1)[0] == 90
-    assert row(temp_database, CHAT, 2)[0] == 2
+    assert row(temp_database, CHAT, 1)[0] == 11
+    assert row(temp_database, CHAT, 2)[0] == 0
+    assert result.result["winner_points_before"] == 1
+    assert result.result["loser_points_before"] == 1
     assert "Старое имя" in result.result["final_text"]
     assert "Новое имя" not in result.result["final_text"]
+
+
+def test_concurrent_credit_and_duel_finish_preserve_both_changes(
+    temp_database, monkeypatch,
+):
+    register()
+    session = terminal_session()
+    trace = rng(monkeypatch, [0.99, 0.99, 0.99])
+    start = Barrier(2)
+
+    def finish():
+        start.wait()
+        return duel_service.finalize_persistent_duel(CHAT, session["id"])
+
+    def credit():
+        start.wait()
+        with database.get_db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("UPDATE duel_users SET points = MIN(100, points + 15) "
+                         "WHERE chat_id = ? AND user_id = 1", (CHAT,))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        finished = pool.submit(finish)
+        credited = pool.submit(credit)
+        assert finished.result().reason == "finalized"
+        credited.result()
+
+    assert row(temp_database, CHAT, 1)[0] == 45
+    assert row(temp_database, CHAT, 2)[0] == 15
+    assert len([call for call in trace.trace if call[0] == "random"]) == 3
 
 
 def test_dick_and_exact_collectible_steal_with_one_monthly_increment(
@@ -249,7 +286,7 @@ def test_zero_point_snapshot_guarantees_steal_without_decision_rng(
     assert finalized.reason == "finalized"
     result = finalized.result
     assert result["is_dick_stolen"] is True
-    assert (result["winner_points"], result["loser_points"]) == (10, 0)
+    assert (result["winner_points"], result["loser_points"]) == (10, 30)
     assert result["stolen_item"]["instance_id"] == item["id"]
     assert result["dwarf_fact"] == duel_service.DWARFS_FACTS[0]
     assert result["berserk"] is not None
@@ -265,7 +302,7 @@ def test_zero_point_snapshot_guarantees_steal_without_decision_rng(
     assert trace.trace[-1][1] == ("catalog", tuple(duel_service.DUEL_POST_MESSAGES))
     chance.assert_not_called()
     assert row(temp_database, CHAT, 1)[:4] == (10, 1, 0, 1)
-    assert row(temp_database, CHAT, 2) == (0, 0, 1, 0, 1, 1, "g1")
+    assert row(temp_database, CHAT, 2) == (30, 0, 1, 0, 1, 1, "g1")
     assert inventory(temp_database) == [(item["id"] + 1, 1, "po_lochki")]
     month = database.moscow_month_key()
     assert database.get_monthly_chat_stats(CHAT, month) == {
