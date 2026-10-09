@@ -61,7 +61,7 @@ def get_stolen_dicks_title(stolen_dicks_count: int) -> str | None:
 
 
 def get_duel_title_read_model(user: dict) -> dict:
-    """The three independent /duel_stats titles with their source counts."""
+    """The three independent /me titles with their source counts."""
     return {
         "wins": {"text": get_win_title(user["wins"]), "count": user["wins"]},
         "losses": {"text": get_loss_title(user["losses"]), "count": user["losses"]},

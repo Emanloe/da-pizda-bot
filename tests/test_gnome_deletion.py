@@ -312,7 +312,7 @@ async def test_guard_blocks_game_updates_but_leaves_non_game_updates(temp_databa
     with pytest.raises(ApplicationHandlerStop):
         await guard_deleted_game_update(game, None)
     game.callback_query.answer.assert_awaited_once()
-    for command in ("/app", "/duel_app"):
+    for command in ("/app", "/duel_app", "/me", "/duel_stats"):
         launch = SimpleNamespace(effective_user=_user(), callback_query=None,
                                  message=SimpleNamespace(text=command, reply_text=AsyncMock()))
         with pytest.raises(ApplicationHandlerStop):

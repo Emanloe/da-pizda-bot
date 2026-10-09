@@ -142,7 +142,7 @@ BOT_COMMANDS = [
     BotCommand("summary", get_text("menu.commands.summary")),
     BotCommand("dig", get_text("menu.commands.dig")),
     BotCommand("ball", get_text("menu.commands.ball")),
-    BotCommand("duel_stats", get_text("menu.commands.duel_stats")),
+    BotCommand("me", get_text("menu.commands.me")),
     BotCommand("inspect", get_text("menu.commands.inspect")),
     BotCommand("duel_top", get_text("menu.commands.duel_top")),
     BotCommand("duel_delete", get_text("menu.commands.duel_delete")),
@@ -458,7 +458,7 @@ async def main():
 
     application.add_handler(
         CommandHandler(
-            "duel_stats",
+            ("me", "duel_stats"),
             duel_stats_command,
         )
     )

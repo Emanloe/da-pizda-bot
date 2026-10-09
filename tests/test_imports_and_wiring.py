@@ -74,7 +74,7 @@ def test_bot_command_menu_preserves_descriptions_and_order():
         ("summary", "Месячная статистика чата"),
         ("dig", "Копать за 10 очков"),
         ("ball", "Активировать элитный мячик"),
-        ("duel_stats", "Статистика дуэлей"),
+        ("me", "Статистика дуэлей"),
         ("inspect", "Осмотреть игрока"),
         ("duel_top", "Топ дуэлянтов"),
         ("duel_delete", "Удалить игрока дуэлей"),
@@ -203,7 +203,7 @@ async def test_registered_duel_stats_handler_shows_base_items_only_in_equipment(
         handler
         for handler in registered_handlers
         if isinstance(handler, CommandHandler)
-        and handler.commands == frozenset({"duel_stats"})
+        and handler.commands == frozenset({"me", "duel_stats"})
     ]
     assert len(handlers) == 1
     assert handlers[0].callback is bot.duel_stats_command
@@ -235,13 +235,20 @@ async def test_registered_duel_stats_handler_shows_base_items_only_in_equipment(
         effective_chat=message.chat,
     )
 
-    await handlers[0].callback(update, fake_context)
-
-    reply_text.assert_awaited_once()
-    final_output = reply_text.await_args.args[0]
+    outputs = []
+    for command in ("/me", "/duel_stats"):
+        message.text = command
+        await handlers[0].callback(update, fake_context)
+        reply_text.assert_awaited_once()
+        outputs.append(reply_text.await_args.args[0])
+        reply_text.reset_mock()
+    assert outputs[0] == outputs[1]
+    final_output = outputs[0]
     assert f"<b>Инвентарь:</b> {expected_inventory}" in final_output
     assert "⚔️ Оружие: Нож" in final_output
     assert "🧥 Верхняя одежда: Промасленная жилетка" in final_output
+    assert "💍 Аксессуар 1: Пусто" in final_output
+    assert "💍 Аксессуар 2: Пусто" in final_output
     assert "Промасленная жилетка ×2" not in final_output
     assert "Нож ×2" not in final_output
 
