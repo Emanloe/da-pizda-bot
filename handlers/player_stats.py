@@ -9,7 +9,7 @@ from handlers.duel_text import get_duel_title_read_model
 from text_resources import get_text, get_text_mapping
 
 
-EQUIPMENT_SLOT_ORDER = ("weapon", "outerwear", "clothing", "head", "groin", "footwear")
+EQUIPMENT_SLOT_ORDER = ("head", "clothing", "groin", "weapon", "outerwear", "footwear", "accessory")
 
 
 def _equipment_read_model(chat_id: int, user_id: int) -> dict:

@@ -15,7 +15,7 @@ BIRTHDAY_COOLDOWN = timedelta(days=365)
 GENERATED_EQUIPMENT_SLOTS = {
     "оружие": "weapon", "верхняя одежда": "outerwear",
     "одежда": "clothing", "головной убор": "head",
-    "пах": "groin", "обувь": "footwear",
+    "пах": "groin", "обувь": "footwear", "аксессуар": "accessory",
 }
 PROTECTIVE_ZONE_SLOTS = {"head": "head", "body": "clothing", "dick": "groin"}
 
@@ -435,11 +435,28 @@ def init_db():
                 chat_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 slot TEXT NOT NULL CHECK (slot IN
-                    ('weapon', 'outerwear', 'clothing', 'head', 'groin', 'footwear')),
+                    ('weapon', 'outerwear', 'clothing', 'head', 'groin', 'footwear', 'accessory')),
                 inventory_id INTEGER NOT NULL UNIQUE,
                 PRIMARY KEY (chat_id, user_id, slot)
             )
         """)
+        equipment_schema = cursor.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'duel_equipment'"
+        ).fetchone()[0]
+        if "'accessory'" not in equipment_schema:
+            cursor.execute("""CREATE TABLE duel_equipment_new (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                slot TEXT NOT NULL CHECK (slot IN
+                    ('weapon', 'outerwear', 'clothing', 'head', 'groin', 'footwear', 'accessory')),
+                inventory_id INTEGER NOT NULL UNIQUE,
+                PRIMARY KEY (chat_id, user_id, slot)
+            )""")
+            cursor.execute("""INSERT INTO duel_equipment_new (chat_id, user_id, slot, inventory_id)
+                SELECT chat_id, user_id, slot, inventory_id FROM duel_equipment""")
+            cursor.execute("DROP TRIGGER IF EXISTS trg_duel_inventory_equipment_delete")
+            cursor.execute("DROP TABLE duel_equipment")
+            cursor.execute("ALTER TABLE duel_equipment_new RENAME TO duel_equipment")
         cursor.execute("""CREATE TABLE IF NOT EXISTS generated_equipment_migrations (
             migration_key TEXT PRIMARY KEY,
             applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -830,7 +847,7 @@ def _migrate_legacy_generated_equipment() -> None:
                 if cursor.rowcount != 1:
                     continue
                 stats["restored"] += 1
-                if missing_kind and kind in GENERATED_EQUIPMENT_SLOTS:
+                if missing_kind and kind != "аксессуар" and kind in GENERATED_EQUIPMENT_SLOTS:
                     eligible_slots[item_id] = GENERATED_EQUIPMENT_SLOTS[kind]
 
             occupied = set(cursor.execute(

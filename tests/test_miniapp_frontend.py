@@ -28,6 +28,15 @@ def test_duel_timer_and_action_layout_in_browser_runtime():
     subprocess.run([node, str(harness)], check=True, timeout=10)
 
 
+def test_equipment_columns_keep_two_flexible_tracks_on_narrow_screens():
+    css = (STATIC_DIR / "app.css").read_text(encoding="utf-8")
+    assert re.search(r"\.equipment-layout\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)", css)
+    assert ".equipment-column { min-width: 0; }" in css
+    assert ".equipment-grid .value { min-width: 0; overflow-wrap: anywhere; }" in css
+    assert ".equipment-slot { width: 100%; }" in css
+    assert not re.search(r"@media[^{}]*\{[^{}]*\.equipment-layout[^{}]*grid-template-columns:\s*1fr", css)
+
+
 def test_bootstrap_reasons_and_status_in_browser_runtime():
     node = shutil.which("node")
     if node is None:

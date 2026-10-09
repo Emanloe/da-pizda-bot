@@ -151,7 +151,13 @@ main { padding: 7px; min-height: 300px; }
 .notice.bad { border-color: var(--danger); background: var(--danger-bg); color: var(--danger); }
 .bootstrap-debug-code { display: block; margin-top: 4px; font-size: 11px; opacity: .75; }
 .inventory-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); }
-.equipment-grid { margin-bottom: 10px; }
+.equipment-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; min-width: 0; }
+.equipment-column { min-width: 0; }
+.equipment-column-title { min-height: 28px; padding: 5px 4px; font-weight: bold; font-size: 10px; overflow-wrap: anywhere; }
+.equipment-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; border: 1px solid var(--border); background: var(--border); }
+.equipment-grid .data-cell { min-width: 0; overflow-wrap: anywhere; }
+.equipment-grid .value { min-width: 0; overflow-wrap: anywhere; }
+.equipment-slot { width: 100%; }
 .inventory-list li { display: flex; justify-content: space-between; gap: 8px; padding: 4px 7px; background: var(--surface-raised); overflow-wrap: anywhere; }
 .inventory-list li + li { border-top: 1px solid var(--border); }
 .inventory-list strong { flex: none; }

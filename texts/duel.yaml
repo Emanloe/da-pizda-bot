@@ -233,12 +233,13 @@ equipment:
     pl: "{item_name} остановили удар и порвались"
     unknown: "Удар остановлен. Предмет уничтожен: {item_name}"
   slots:
+    head: "🎩 Головной убор"
+    clothing: "👕 Торс"
+    groin: "🍆 Пах"
     weapon: "⚔️ Оружие"
     outerwear: "🧥 Верхняя одежда"
-    clothing: "👕 Торс"
-    head: "🎩 Головной убор"
-    groin: "🍆 Пах"
     footwear: "👞 Обувь"
+    accessory: "💍 Аксессуар"
 top:
   empty: 🏆 Таблица лидеров чата пока пуста.
   sort_by_points: очкам

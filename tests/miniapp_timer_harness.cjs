@@ -286,6 +286,7 @@ const ownProfile = {
     head: { label: "🎩 Головной убор", name: "Пусто" },
     groin: { label: "🍆 Пах", name: "Пусто" },
     footwear: { label: "👞 Обувь", name: "Пусто" },
+    accessory: { label: "💍 Аксессуар", name: "Пусто" },
   },
 };
 app.renderHome(ownProfile);
@@ -300,10 +301,14 @@ assert.equal(homeProfile.children[1].children.length, 6);
 assert.equal(homeProfile.children[1].children[0].children[1].textContent, "<script>alert(1)</script>");
 assert.deepEqual(homeContent.children.filter(child => child.tag === "h3").map(child => child.textContent),
   ["Хуяние", "Статус", "Экипировка", "Инвентарь"]);
-const equipmentGrid = findClass(homeContent, "equipment-grid");
-assert.equal(equipmentGrid.children.length, 6);
-assert.equal(equipmentGrid.children[0].children[1].textContent, "Именной меч");
-assert.equal(equipmentGrid.children[2].children[0].textContent, "👕 Торс");
+const equipmentLayout = findClass(homeContent, "equipment-layout");
+assert.equal(equipmentLayout.children.length, 2);
+assert.equal(equipmentLayout.children[0].children[0].textContent, "Боевая экипировка");
+assert.equal(equipmentLayout.children[1].children[0].textContent, "Косметика");
+assert.deepEqual(equipmentLayout.children.map(column => column.children[1].children.length), [3, 4]);
+assert.equal(equipmentLayout.children[0].children[1].children[1].children[0].textContent, "👕 Торс");
+assert.equal(equipmentLayout.children[1].children[1].children[0].children[1].textContent, "Именной меч");
+assert.equal(equipmentLayout.children[1].children[1].children[3].children[0].textContent, "💍 Аксессуар");
 app.renderProfile(ownProfile, nodes.get("opponents-content"), true);
 const inspectedProfile = nodes.get("opponents-content").children[0];
 const inspectedHero = findClass(inspectedProfile, "home-profile");
@@ -796,24 +801,26 @@ async function testPolling() {
 async function testEquipment() {
   app.setContext("test-session", "home");
   app.renderHome(ownProfile);
-  let grid = findClass(nodes.get("home-content").children[0], "equipment-grid");
-  assert.equal(grid.children[2].tag, "button");
-  await grid.children[2].listeners.click();
+  const combatGrid = () => findClass(nodes.get("home-content").children[0], "equipment-layout")
+    .children[0].children[1];
+  let grid = combatGrid();
+  assert.equal(grid.children[1].tag, "button");
+  await grid.children[1].listeners.click();
   let picker = nodes.get("home-content").querySelector(".equipment-picker");
   assert.equal(findClass(picker.children[1], "small-button").textContent, "Надеть");
   await findClass(picker.children[1], "small-button").listeners.click();
   assert.equal(equipmentPosts, 1);
-  grid = findClass(nodes.get("home-content").children[0], "equipment-grid");
-  assert.equal(grid.children[2].children[1].textContent, "Рубаха");
-  await grid.children[2].listeners.click();
+  grid = combatGrid();
+  assert.equal(grid.children[1].children[1].textContent, "Рубаха");
+  await grid.children[1].listeners.click();
   picker = nodes.get("home-content").querySelector(".equipment-picker");
   assert.equal(picker.children[1].textContent, "Снять");
   await picker.children[1].listeners.click();
   assert.equal(equipmentPosts, 2);
-  grid = findClass(nodes.get("home-content").children[0], "equipment-grid");
-  assert.equal(grid.children[2].children[1].textContent, "Пусто");
+  grid = combatGrid();
+  assert.equal(grid.children[1].children[1].textContent, "Пусто");
   app.renderHome({ ...ownProfile, equipment_management_blocked: true });
-  grid = findClass(nodes.get("home-content").children[0], "equipment-grid");
+  grid = combatGrid();
   assert.ok(grid.children.every(button => button.disabled));
 }
 

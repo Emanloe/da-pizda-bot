@@ -74,6 +74,39 @@ async def test_list_equip_replace_unequip_and_virtual_defaults(temp_database):
 
 
 @pytest.mark.asyncio
+async def test_old_accessory_can_be_manually_equipped_and_unequipped(temp_database):
+    register(CHAT_A, 101, "hero")
+    register(CHAT_A, 202, "other")
+    with db.get_db() as conn:
+        conn.execute("INSERT INTO generated_item_names (item_id, name, kind) VALUES (?, ?, ?)",
+                     ("legacy_ring", "Старое кольцо", "аксессуар"))
+        old = conn.execute("INSERT INTO duel_inventory (chat_id, user_id, item_id) VALUES (?, ?, ?)",
+                           (CHAT_A, 101, "legacy_ring")).lastrowid
+    foreign = item(CHAT_A, 202, "foreign_ring", "Чужое кольцо", "аксессуар")
+    wrong = item(CHAT_A, 101, "sword_for_ring", "Меч", "оружие")
+    assert "accessory" not in equipment()
+    api = create_miniapp_api(bot_token=TEST_BOT_TOKEN, allowed_origin="")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api),
+                                 base_url="http://test") as client:
+        headers = await session_for(client, CHAT_A, 101)
+        listed = (await client.get("/api/v1/equipment/accessory", headers=headers)).json()
+        assert listed["items"] == [{"inventory_id": old, "name": "Старое кольцо", "equipped": False}]
+        for instance, code in ((foreign, "item_unavailable"), (wrong, "wrong_slot")):
+            response = await client.post("/api/v1/equipment/equip", headers=headers,
+                                         json={"slot": "accessory", "inventory_id": instance})
+            assert response.status_code == 409 and response.json()["detail"]["code"] == code
+        response = await client.post("/api/v1/equipment/equip", headers=headers,
+                                     json={"slot": "accessory", "inventory_id": old})
+        assert response.json()["status"] == "equipped"
+        assert (await client.get("/api/v1/me", headers=headers)).json()["equipment"]["accessory"]["name"] == "Старое кольцо"
+        response = await client.post("/api/v1/equipment/unequip", headers=headers,
+                                     json={"slot": "accessory"})
+        assert response.json()["status"] == "unequipped"
+        assert (await client.get("/api/v1/me", headers=headers)).json()["equipment"]["accessory"]["name"] == "Пусто"
+    assert any(row["id"] == old for row in db.get_duel_inventory(CHAT_A, 101))
+
+
+@pytest.mark.asyncio
 async def test_deleted_profile_cannot_equip_and_return_starts_empty(temp_database):
     register(CHAT_A, 101, "hero")
     sword = item(CHAT_A, 101, "sword", "Меч", "оружие")
@@ -92,6 +125,7 @@ async def test_pvp_participants_cannot_change_any_slot_until_finished(temp_datab
     player2 = register(CHAT_A, 202, "opponent")
     first = item(CHAT_A, 101, "first", "Первый шлем", "головной убор")
     second = item(CHAT_A, 101, "second", "Второй шлем", "головной убор")
+    accessory = item(CHAT_A, 101, "pvp_ring", "Кольцо", "аксессуар")
     assert db.change_generated_equipment(CHAT_A, 101, "head", first) == "equipped"
     duel_session = create_duel_session(
         CHAT_A, 101, 202, snapshot(player1), snapshot(player2), 101, 202,
@@ -107,6 +141,8 @@ async def test_pvp_participants_cannot_change_any_slot_until_finished(temp_datab
             ("equip", {"slot": "head", "inventory_id": second}),
             ("equip", {"slot": "head", "inventory_id": first}),
             ("unequip", {"slot": "head"}),
+            ("equip", {"slot": "accessory", "inventory_id": accessory}),
+            ("unequip", {"slot": "accessory"}),
         ]:
             response = await client.post(f"/api/v1/equipment/{path}", headers=headers, json=body)
             assert response.status_code == 409
@@ -125,6 +161,7 @@ async def test_boss_participant_rejected_and_boss_join_race_serialized(temp_data
     register(CHAT_A, 101, "hero")
     first = item(CHAT_A, 101, "first", "Шлем", "головной убор")
     second = item(CHAT_A, 101, "second", "Шапка", "головной убор")
+    accessory = item(CHAT_A, 101, "boss_ring", "Кольцо", "аксессуар")
     battle = {"lock": asyncio.Lock(), "participants": {101: {}}}
     monkeypatch.setitem(duel.ACTIVE_BOSS_BATTLES, CHAT_A, battle)
     api = create_miniapp_api(bot_token=TEST_BOT_TOKEN, allowed_origin="")
@@ -136,6 +173,8 @@ async def test_boss_participant_rejected_and_boss_join_race_serialized(temp_data
             ("equip", {"slot": "head", "inventory_id": first}),
             ("equip", {"slot": "head", "inventory_id": second}),
             ("unequip", {"slot": "head"}),
+            ("equip", {"slot": "accessory", "inventory_id": accessory}),
+            ("unequip", {"slot": "accessory"}),
         ]:
             response = await client.post(f"/api/v1/equipment/{path}", headers=headers, json=body)
             assert response.status_code == 409

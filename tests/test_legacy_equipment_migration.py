@@ -110,6 +110,21 @@ def test_old_shield_metadata_and_free_groin_are_restored_once(temp_database):
     assert db.get_duel_equipment(CHAT, 1) == {}
 
 
+def test_old_accessory_metadata_recovery_does_not_auto_equip(temp_database):
+    register()
+    name = "Поганый коммунальный лорнет кобры"
+    instance_id, item_id = legacy_item(name)
+    assert recover.recover_legacy_generated_metadata(item_id, name) == (
+        "recovered", ("аксессуар", "m"))
+    run_legacy_migration()
+    assert metadata(item_id) == (name, "аксессуар", "m")
+    assert db.get_duel_equipment(CHAT, 1) == {}
+    assert db.list_generated_equipment_instances(CHAT, 1, "accessory") == [
+        {"inventory_id": instance_id, "name": name, "equipped": False}]
+    db.init_db()
+    assert db.get_duel_equipment(CHAT, 1) == {}
+
+
 def test_occupied_slot_is_kept_and_oldest_free_candidate_wins(temp_database):
     register()
     first, _ = legacy_item(SHIELD)

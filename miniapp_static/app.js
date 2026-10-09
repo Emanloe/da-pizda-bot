@@ -231,25 +231,35 @@
     );
     content.append(status);
     addHeading(content, "Экипировка");
-    const equipment = element("div", "data-grid equipment-grid");
+    const equipment = element("div", "equipment-layout");
     const equipmentPanel = element("div", "equipment-panel");
     if (!inspected && data.equipment_management_blocked) {
       content.append(notice("Управление экипировкой недоступно во время боя."));
     }
-    for (const slot of ["weapon", "outerwear", "clothing", "head", "groin", "footwear"]) {
-      const item = data.equipment?.[slot];
-      if (!item) continue;
-      if (inspected) {
-        equipment.append(dataCell(item.label, item.name));
-      } else {
-        const button = element("button", "data-cell equipment-slot");
-        button.type = "button";
-        button.append(element("span", "label", item.label),
-          element("span", "value", item.name));
-        button.disabled = Boolean(data.equipment_management_blocked);
-        button.addEventListener("click", () => openEquipmentSlot(slot, item.label, equipmentPanel));
-        equipment.append(button);
+    for (const [title, slots] of [
+      ["Боевая экипировка", ["head", "clothing", "groin"]],
+      ["Косметика", ["weapon", "outerwear", "footwear", "accessory"]],
+    ]) {
+      const column = element("div", "equipment-column");
+      column.append(element("div", "equipment-column-title", title));
+      const grid = element("div", "equipment-grid");
+      for (const slot of slots) {
+        const item = data.equipment?.[slot];
+        if (!item) continue;
+        if (inspected) {
+          grid.append(dataCell(item.label, item.name));
+        } else {
+          const button = element("button", "data-cell equipment-slot");
+          button.type = "button";
+          button.append(element("span", "label", item.label),
+            element("span", "value", item.name));
+          button.disabled = Boolean(data.equipment_management_blocked);
+          button.addEventListener("click", () => openEquipmentSlot(slot, item.label, equipmentPanel));
+          grid.append(button);
+        }
       }
+      column.append(grid);
+      equipment.append(column);
     }
     content.append(equipment);
     if (!inspected) content.append(equipmentPanel);
