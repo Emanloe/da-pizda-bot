@@ -286,7 +286,8 @@ const ownProfile = {
     head: { label: "🎩 Головной убор", name: "Пусто" },
     groin: { label: "🍆 Пах", name: "Пусто" },
     footwear: { label: "👞 Обувь", name: "Пусто" },
-    accessory: { label: "💍 Аксессуар", name: "Пусто" },
+    accessory: { label: "💍 Аксессуар 1", name: "Пусто" },
+    accessory_2: { label: "💍 Аксессуар 2", name: "Пусто" },
   },
 };
 app.renderHome(ownProfile);
@@ -305,10 +306,11 @@ const equipmentLayout = findClass(homeContent, "equipment-layout");
 assert.equal(equipmentLayout.children.length, 2);
 assert.equal(equipmentLayout.children[0].children[0].textContent, "Боевая экипировка");
 assert.equal(equipmentLayout.children[1].children[0].textContent, "Косметика");
-assert.deepEqual(equipmentLayout.children.map(column => column.children[1].children.length), [3, 4]);
+assert.deepEqual(equipmentLayout.children.map(column => column.children[1].children.length), [3, 5]);
 assert.equal(equipmentLayout.children[0].children[1].children[1].children[0].textContent, "👕 Торс");
 assert.equal(equipmentLayout.children[1].children[1].children[0].children[1].textContent, "Именной меч");
-assert.equal(equipmentLayout.children[1].children[1].children[3].children[0].textContent, "💍 Аксессуар");
+assert.equal(equipmentLayout.children[1].children[1].children[3].children[0].textContent, "💍 Аксессуар 1");
+assert.equal(equipmentLayout.children[1].children[1].children[4].children[0].textContent, "💍 Аксессуар 2");
 app.renderProfile(ownProfile, nodes.get("opponents-content"), true);
 const inspectedProfile = nodes.get("opponents-content").children[0];
 const inspectedHero = findClass(inspectedProfile, "home-profile");

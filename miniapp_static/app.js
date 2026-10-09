@@ -238,7 +238,7 @@
     }
     for (const [title, slots] of [
       ["Боевая экипировка", ["head", "clothing", "groin"]],
-      ["Косметика", ["weapon", "outerwear", "footwear", "accessory"]],
+      ["Косметика", ["weapon", "outerwear", "footwear", "accessory", "accessory_2"]],
     ]) {
       const column = element("div", "equipment-column");
       column.append(element("div", "equipment-column-title", title));

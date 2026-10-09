@@ -115,6 +115,77 @@ def test_six_slot_table_migrates_without_changing_existing_equipment(temp_databa
     assert db.get_duel_equipment(CHAT, 1)["head"]["inventory_id"] == hat["id"]
 
 
+def test_seven_slot_table_migrates_existing_accessory_once(temp_database):
+    register()
+    ring = award("legacy_worn_ring", "Старое кольцо", "аксессуар")
+    with db.get_db() as conn:
+        marker_before = conn.execute(
+            "SELECT applied_at FROM generated_equipment_migrations WHERE migration_key = ?",
+            ("legacy_generated_equipment_v1",),
+        ).fetchone()
+        conn.execute("DROP TABLE duel_equipment")
+        conn.execute("""CREATE TABLE duel_equipment (
+            chat_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            slot TEXT NOT NULL CHECK (slot IN
+                ('weapon', 'outerwear', 'clothing', 'head', 'groin', 'footwear', 'accessory')),
+            inventory_id INTEGER NOT NULL UNIQUE,
+            PRIMARY KEY (chat_id, user_id, slot))""")
+        conn.execute("INSERT INTO duel_equipment VALUES (?, ?, ?, ?)",
+                     (CHAT, 1, "accessory", ring["id"]))
+    db.init_db()
+    db.init_db()
+    assert db.get_duel_equipment(CHAT, 1)["accessory"]["inventory_id"] == ring["id"]
+    assert "accessory_2" not in db.get_duel_equipment(CHAT, 1)
+    with db.get_db() as conn:
+        schema = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'duel_equipment'").fetchone()[0]
+        assert "'accessory_2'" in schema
+        assert conn.execute("""SELECT applied_at FROM generated_equipment_migrations
+                               WHERE migration_key = ?""",
+                            ("legacy_generated_equipment_v1",)).fetchone() == marker_before
+        assert conn.execute("""SELECT COUNT(*) FROM sqlite_master
+                               WHERE type = 'trigger' AND name = 'trg_duel_inventory_equipment_delete'""").fetchone()[0] == 1
+    second = award("second_worn_ring", "Новое кольцо", "аксессуар")
+    assert db.get_duel_equipment(CHAT, 1)["accessory_2"]["inventory_id"] == second["id"]
+    assert db.remove_duel_inventory_instance(CHAT, 1, second["id"])
+    assert "accessory_2" not in db.get_duel_equipment(CHAT, 1)
+
+
+def test_accessory_move_between_slots_is_atomic_and_unique(temp_database):
+    register()
+    first = award("move_first", "Первое кольцо", "аксессуар")
+    second = award("move_second", "Второе кольцо", "аксессуар")
+    assert db.change_generated_equipment(CHAT, 1, "accessory_2", first["id"]) == "equipped"
+    assert db.get_duel_equipment(CHAT, 1) == {
+        "accessory_2": {"inventory_id": first["id"], "item_id": "move_first", "name": "Первое кольцо"},
+    }
+    assert db.change_generated_equipment(CHAT, 1, "accessory", first["id"]) == "equipped"
+    assert db.change_generated_equipment(CHAT, 1, "accessory_2", second["id"]) == "equipped"
+    with db.get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM duel_equipment WHERE inventory_id = ?",
+                            (first["id"],)).fetchone()[0] == 1
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO duel_equipment VALUES (?, ?, ?, ?)",
+                         (CHAT, 1, "head", first["id"]))
+        conn.execute("""CREATE TRIGGER reject_accessory_move BEFORE INSERT ON duel_equipment
+                        WHEN NEW.slot = 'accessory_2'
+                        BEGIN SELECT RAISE(ABORT, 'move rejected'); END""")
+    with pytest.raises(sqlite3.IntegrityError, match="move rejected"):
+        db.change_generated_equipment(CHAT, 1, "accessory_2", first["id"])
+    assert db.get_duel_equipment(CHAT, 1)["accessory"]["inventory_id"] == first["id"]
+    assert db.get_duel_equipment(CHAT, 1)["accessory_2"]["inventory_id"] == second["id"]
+
+
+def test_unpublished_second_accessory_drop_restores_its_slot(temp_database):
+    register()
+    award("first_drop_ring", "Первое кольцо", "аксессуар")
+    second = award("second_drop_ring", "Второе кольцо", "аксессуар")
+    drop = db.create_duel_item_event_from_inventory(CHAT, 1, second["id"])
+    assert drop["equipped_slot"] == "accessory_2"
+    assert "accessory_2" not in db.get_duel_equipment(CHAT, 1)
+    assert db.restore_unpublished_duel_drop(drop)
+    assert db.get_duel_equipment(CHAT, 1)["accessory_2"]["inventory_id"] == second["id"]
+
+
 @pytest.mark.parametrize("base_form,name,expected", [
     ("m", "Ебейший железный шлем дракона", "остановил удар и порвался"),
     ("f", "Поганая меховая шапка дракона", "остановила удар и порвалась"),
@@ -184,15 +255,30 @@ def test_nonprotective_slots_never_absorb(temp_database, kind):
 
 def test_new_accessory_replaces_worn_instance_without_changing_inventory(temp_database):
     register()
-    old = award("old_ring", "Старое кольцо", "аксессуар")
-    new = award("new_ring", "Новое кольцо", "аксессуар")
-    assert db.get_duel_equipment(CHAT, 1)["accessory"]["inventory_id"] == new["id"]
+    first = award("first_ring", "Первое кольцо", "аксессуар")
+    assert db.get_duel_equipment(CHAT, 1)["accessory"]["inventory_id"] == first["id"]
+    assert "accessory_2" not in db.get_duel_equipment(CHAT, 1)
+    second = award("second_ring", "Второе кольцо", "аксессуар")
+    assert db.get_duel_equipment(CHAT, 1)["accessory"]["inventory_id"] == first["id"]
+    assert db.get_duel_equipment(CHAT, 1)["accessory_2"]["inventory_id"] == second["id"]
+    third = award("third_ring", "Третье кольцо", "аксессуар")
+    assert db.get_duel_equipment(CHAT, 1)["accessory"]["inventory_id"] == third["id"]
+    assert db.get_duel_equipment(CHAT, 1)["accessory_2"]["inventory_id"] == second["id"]
+    assert db.change_generated_equipment(CHAT, 1, "accessory") == "unequipped"
+    fourth = award("fourth_ring", "Четвёртое кольцо", "аксессуар")
+    assert db.get_duel_equipment(CHAT, 1)["accessory"]["inventory_id"] == fourth["id"]
+    assert db.get_duel_equipment(CHAT, 1)["accessory_2"]["inventory_id"] == second["id"]
+    assert len(db.get_duel_inventory(CHAT, 1)) == 4
     db.init_db()
-    assert db.get_duel_equipment(CHAT, 1)["accessory"]["inventory_id"] == new["id"]
-    assert {row["id"] for row in db.get_duel_inventory(CHAT, 1)} == {old["id"], new["id"]}
+    assert db.get_duel_equipment(CHAT, 1)["accessory"]["inventory_id"] == fourth["id"]
+    assert db.get_duel_equipment(CHAT, 1)["accessory_2"]["inventory_id"] == second["id"]
+    assert {row["id"] for row in db.get_duel_inventory(CHAT, 1)} == {
+        first["id"], second["id"], third["id"], fourth["id"],
+    }
     for zone in ("head", "body", "dick"):
         assert db.consume_equipped_item_for_hit(CHAT, 1, zone) is None
-    assert db.get_duel_equipment(CHAT, 1)["accessory"]["inventory_id"] == new["id"]
+    assert db.get_duel_equipment(CHAT, 1)["accessory"]["inventory_id"] == fourth["id"]
+    assert db.get_duel_equipment(CHAT, 1)["accessory_2"]["inventory_id"] == second["id"]
 
 
 def test_atomic_consume_race_and_deletion_cleanup(temp_database):
@@ -331,8 +417,9 @@ def test_effective_defaults_overrides_and_telegram_inventory(temp_database):
         "weapon", "outerwear", "head", "groin", "footwear")] == [
         "⚔️ Оружие", "🧥 Верхняя одежда", "🎩 Головной убор", "🍆 Пах", "👞 Обувь"]
     assert all(model["equipment"][slot]["item_id"] is None
-               for slot in ("clothing", "head", "groin", "footwear", "accessory"))
-    assert model["equipment"]["accessory"]["label"] == "💍 Аксессуар"
+               for slot in ("clothing", "head", "groin", "footwear", "accessory", "accessory_2"))
+    assert model["equipment"]["accessory"]["label"] == "💍 Аксессуар 1"
+    assert model["equipment"]["accessory_2"]["label"] == "💍 Аксессуар 2"
     award("sword", "Меч & щит", "оружие")
     award("cloak", "Плащ", "верхняя одежда")
     model = player_stats_read_model(CHAT, 1)
@@ -342,7 +429,8 @@ def test_effective_defaults_overrides_and_telegram_inventory(temp_database):
     telegram = format_player_stats_telegram(model)
     assert "Меч &amp; щит" in telegram
     assert "👕 Торс: Пусто" in telegram
-    assert "💍 Аксессуар: Пусто" in telegram
+    assert "💍 Аксессуар 1: Пусто" in telegram
+    assert "💍 Аксессуар 2: Пусто" in telegram
     assert "👕 Одежда" not in telegram
     assert "<b>Инвентарь:</b> Промасленная жилетка" not in telegram
     assert "Нож" not in telegram.split("<b>Инвентарь:</b>", 1)[1]
@@ -370,8 +458,8 @@ async def test_miniapp_profile_exposes_effective_equipment_and_owned_stack(temp_
                                  base_url="http://test") as client:
         headers = await session_for(client, CHAT, 1)
         profile = (await client.get("/api/v1/me", headers=headers)).json()
-    assert len(profile["equipment"]) == 7
-    assert list(profile["equipment"]) == ["head", "clothing", "groin", "weapon", "outerwear", "footwear", "accessory"]
+    assert len(profile["equipment"]) == 8
+    assert list(profile["equipment"]) == ["head", "clothing", "groin", "weapon", "outerwear", "footwear", "accessory", "accessory_2"]
     assert profile["equipment"]["weapon"]["name"] == "Именной меч"
     assert profile["equipment"]["outerwear"]["name"] == "Промасленная жилетка"
     assert profile["equipment"]["clothing"]["item_id"] is None

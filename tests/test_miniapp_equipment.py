@@ -99,10 +99,25 @@ async def test_old_accessory_can_be_manually_equipped_and_unequipped(temp_databa
                                      json={"slot": "accessory", "inventory_id": old})
         assert response.json()["status"] == "equipped"
         assert (await client.get("/api/v1/me", headers=headers)).json()["equipment"]["accessory"]["name"] == "Старое кольцо"
+        listed_second = (await client.get("/api/v1/equipment/accessory_2", headers=headers)).json()
+        assert listed_second["items"] == [
+            {"inventory_id": old, "name": "Старое кольцо", "equipped": False}]
+        response = await client.post("/api/v1/equipment/equip", headers=headers,
+                                     json={"slot": "accessory_2", "inventory_id": old})
+        assert response.json()["status"] == "equipped"
+        assert "accessory" not in equipment()
+        assert equipment()["accessory_2"]["inventory_id"] == old
+        response = await client.post("/api/v1/equipment/unequip", headers=headers,
+                                     json={"slot": "accessory_2"})
+        assert response.json()["status"] == "unequipped"
+        response = await client.post("/api/v1/equipment/equip", headers=headers,
+                                     json={"slot": "accessory", "inventory_id": old})
+        assert response.json()["status"] == "equipped"
         response = await client.post("/api/v1/equipment/unequip", headers=headers,
                                      json={"slot": "accessory"})
         assert response.json()["status"] == "unequipped"
         assert (await client.get("/api/v1/me", headers=headers)).json()["equipment"]["accessory"]["name"] == "Пусто"
+        assert (await client.get("/api/v1/me", headers=headers)).json()["equipment"]["accessory_2"]["name"] == "Пусто"
     assert any(row["id"] == old for row in db.get_duel_inventory(CHAT_A, 101))
 
 
@@ -126,6 +141,7 @@ async def test_pvp_participants_cannot_change_any_slot_until_finished(temp_datab
     first = item(CHAT_A, 101, "first", "Первый шлем", "головной убор")
     second = item(CHAT_A, 101, "second", "Второй шлем", "головной убор")
     accessory = item(CHAT_A, 101, "pvp_ring", "Кольцо", "аксессуар")
+    second_accessory = item(CHAT_A, 101, "pvp_ring_2", "Второе кольцо", "аксессуар")
     assert db.change_generated_equipment(CHAT_A, 101, "head", first) == "equipped"
     duel_session = create_duel_session(
         CHAT_A, 101, 202, snapshot(player1), snapshot(player2), 101, 202,
@@ -143,6 +159,8 @@ async def test_pvp_participants_cannot_change_any_slot_until_finished(temp_datab
             ("unequip", {"slot": "head"}),
             ("equip", {"slot": "accessory", "inventory_id": accessory}),
             ("unequip", {"slot": "accessory"}),
+            ("equip", {"slot": "accessory_2", "inventory_id": second_accessory}),
+            ("unequip", {"slot": "accessory_2"}),
         ]:
             response = await client.post(f"/api/v1/equipment/{path}", headers=headers, json=body)
             assert response.status_code == 409
@@ -162,6 +180,7 @@ async def test_boss_participant_rejected_and_boss_join_race_serialized(temp_data
     first = item(CHAT_A, 101, "first", "Шлем", "головной убор")
     second = item(CHAT_A, 101, "second", "Шапка", "головной убор")
     accessory = item(CHAT_A, 101, "boss_ring", "Кольцо", "аксессуар")
+    second_accessory = item(CHAT_A, 101, "boss_ring_2", "Второе кольцо", "аксессуар")
     battle = {"lock": asyncio.Lock(), "participants": {101: {}}}
     monkeypatch.setitem(duel.ACTIVE_BOSS_BATTLES, CHAT_A, battle)
     api = create_miniapp_api(bot_token=TEST_BOT_TOKEN, allowed_origin="")
@@ -175,6 +194,8 @@ async def test_boss_participant_rejected_and_boss_join_race_serialized(temp_data
             ("unequip", {"slot": "head"}),
             ("equip", {"slot": "accessory", "inventory_id": accessory}),
             ("unequip", {"slot": "accessory"}),
+            ("equip", {"slot": "accessory_2", "inventory_id": second_accessory}),
+            ("unequip", {"slot": "accessory_2"}),
         ]:
             response = await client.post(f"/api/v1/equipment/{path}", headers=headers, json=body)
             assert response.status_code == 409

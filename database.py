@@ -17,6 +17,8 @@ GENERATED_EQUIPMENT_SLOTS = {
     "одежда": "clothing", "головной убор": "head",
     "пах": "groin", "обувь": "footwear", "аксессуар": "accessory",
 }
+EQUIPMENT_SLOT_KINDS = {slot: kind for kind, slot in GENERATED_EQUIPMENT_SLOTS.items()}
+EQUIPMENT_SLOT_KINDS["accessory_2"] = "аксессуар"
 PROTECTIVE_ZONE_SLOTS = {"head": "head", "body": "clothing", "dick": "groin"}
 
 
@@ -435,7 +437,7 @@ def init_db():
                 chat_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 slot TEXT NOT NULL CHECK (slot IN
-                    ('weapon', 'outerwear', 'clothing', 'head', 'groin', 'footwear', 'accessory')),
+                    ('weapon', 'outerwear', 'clothing', 'head', 'groin', 'footwear', 'accessory', 'accessory_2')),
                 inventory_id INTEGER NOT NULL UNIQUE,
                 PRIMARY KEY (chat_id, user_id, slot)
             )
@@ -443,12 +445,12 @@ def init_db():
         equipment_schema = cursor.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'duel_equipment'"
         ).fetchone()[0]
-        if "'accessory'" not in equipment_schema:
+        if "'accessory_2'" not in equipment_schema:
             cursor.execute("""CREATE TABLE duel_equipment_new (
                 chat_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 slot TEXT NOT NULL CHECK (slot IN
-                    ('weapon', 'outerwear', 'clothing', 'head', 'groin', 'footwear', 'accessory')),
+                    ('weapon', 'outerwear', 'clothing', 'head', 'groin', 'footwear', 'accessory', 'accessory_2')),
                 inventory_id INTEGER NOT NULL UNIQUE,
                 PRIMARY KEY (chat_id, user_id, slot)
             )""")
@@ -1420,9 +1422,18 @@ def _auto_equip_generated_in_transaction(cursor, chat_id, user_id, inventory_id,
     row = cursor.execute(
         "SELECT kind FROM generated_item_names WHERE item_id = ?", (item_id,)
     ).fetchone()
-    slot = GENERATED_EQUIPMENT_SLOTS.get(row[0]) if row else None
+    kind = row[0] if row else None
+    slot = GENERATED_EQUIPMENT_SLOTS.get(kind)
     if slot is None:
         return
+    if kind == "аксессуар":
+        occupied = {worn_slot for (worn_slot,) in cursor.execute(
+            """SELECT slot FROM duel_equipment WHERE chat_id = ? AND user_id = ?
+               AND slot IN ('accessory', 'accessory_2')""",
+            (chat_id, user_id),
+        )}
+        if "accessory" in occupied and "accessory_2" not in occupied:
+            slot = "accessory_2"
     cursor.execute(
         """INSERT INTO duel_equipment (chat_id, user_id, slot, inventory_id)
            VALUES (?, ?, ?, ?)
@@ -1463,8 +1474,7 @@ def is_active_pvp_participant(chat_id: int, user_id: int) -> bool:
 
 def list_generated_equipment_instances(chat_id: int, user_id: int, slot: str):
     """List only this player's actual generated instances for one equipment slot."""
-    kind = next((kind for kind, value in GENERATED_EQUIPMENT_SLOTS.items()
-                 if value == slot), None)
+    kind = EQUIPMENT_SLOT_KINDS.get(slot)
     if kind is None:
         return None
     from handlers.duel_items import DUEL_ITEM_NAMES
@@ -1490,8 +1500,7 @@ def list_generated_equipment_instances(chat_id: int, user_id: int, slot: str):
 def change_generated_equipment(chat_id: int, user_id: int, slot: str,
                                inventory_id: int | None = None) -> str:
     """Validate and change a slot under the same SQLite write lock as duel start."""
-    kind = next((kind for kind, value in GENERATED_EQUIPMENT_SLOTS.items()
-                 if value == slot), None)
+    kind = EQUIPMENT_SLOT_KINDS.get(slot)
     if kind is None:
         return "invalid_slot"
     from handlers.duel_items import DUEL_ITEM_NAMES
@@ -1524,7 +1533,14 @@ def change_generated_equipment(chat_id: int, user_id: int, slot: str,
             (inventory_id,),
         ).fetchone()
         if worn is not None:
-            return "already_equipped" if worn[0] == slot else "wrong_slot"
+            if worn[0] == slot:
+                return "already_equipped"
+            if kind != "аксессуар" or worn[0] not in ("accessory", "accessory_2"):
+                return "wrong_slot"
+            cursor.execute(
+                "DELETE FROM duel_equipment WHERE chat_id = ? AND user_id = ? AND slot = ?",
+                (chat_id, user_id, worn[0]),
+            )
         cursor.execute(
             """INSERT INTO duel_equipment (chat_id, user_id, slot, inventory_id)
                VALUES (?, ?, ?, ?)
@@ -1758,7 +1774,7 @@ def restore_unpublished_duel_drop_in_transaction(
             drop["item_id"], drop["created_at"],
         ),
     )
-    if drop.get("equipped_slot") in GENERATED_EQUIPMENT_SLOTS.values():
+    if drop.get("equipped_slot") in EQUIPMENT_SLOT_KINDS:
         cursor.execute(
             """INSERT OR IGNORE INTO duel_equipment
                (chat_id, user_id, slot, inventory_id) VALUES (?, ?, ?, ?)""",

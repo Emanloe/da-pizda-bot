@@ -117,7 +117,7 @@ class BossActionRequest(BossJoinRequest):
     action_id: str
 
 
-EquipmentSlot = Literal["weapon", "outerwear", "clothing", "head", "groin", "footwear", "accessory"]
+EquipmentSlot = Literal["weapon", "outerwear", "clothing", "head", "groin", "footwear", "accessory", "accessory_2"]
 
 
 class EquipItemRequest(BaseModel):

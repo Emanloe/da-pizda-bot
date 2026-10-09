@@ -239,7 +239,8 @@ equipment:
     weapon: "⚔️ Оружие"
     outerwear: "🧥 Верхняя одежда"
     footwear: "👞 Обувь"
-    accessory: "💍 Аксессуар"
+    accessory: "💍 Аксессуар 1"
+    accessory_2: "💍 Аксессуар 2"
 top:
   empty: 🏆 Таблица лидеров чата пока пуста.
   sort_by_points: очкам
